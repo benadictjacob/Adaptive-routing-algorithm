@@ -1,550 +1,537 @@
 """
-REST API for the Adaptive Vector Routing System — Cross-Architecture Analysis Simulator.
+═══════════════════════════════════════════════════════════════════════
+  KUBERNETES SELF-HEALING DISASTER-RECOVERY PLATFORM
+  Central REST API Server (Section 12, 13)
+═══════════════════════════════════════════════════════════════════════
 
-Implements all 15 sections of the Master Specification, including architecture-specific 
-models, traditional algorithm comparison, and performance metrics.
+Ties together all layers:
+  • Cluster Model        → controller/cluster.py
+  • Failure Detection    → controller/failure_detector.py
+  • Health Monitoring    → monitor/health_checker.py
+  • Automated Recovery   → recovery/recovery_engine.py
+  • Proxy / Rerouting    → proxy/proxy_server.py
+  • State Snapshots      → state_store/snapshot_engine.py
+  • Disaster Restoration → recovery/disaster_restore.py
+
+Dashboard served from /dashboard (built separately).
+Real-time events via SSE at /api/events/stream.
 """
 
 import sys
 import os
+import json
 import time
 import random
-import math
-import numpy as np
+import threading
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, Response
 from flask_cors import CORS
 
-from avrs.network import Network
-from avrs.node import Node
-from avrs.routing import RoutingEngine
-from avrs.simulation import Simulation, Request
-from avrs.math_utils import euclidean_distance
-from avrs.service_grouping import ServiceGrouping
-from avrs.trust_system import TrustSystem
-from avrs.observability import Observability
-from avrs.health_monitor import HealthMonitor
-from avrs.vector_embedding import get_embedder
+from controller.cluster import (
+    Cluster, KubeNode, Pod, Deployment, Service,
+    NodeStatus, PodStatus, ServiceType,
+)
+from controller.failure_detector import FailureDetector
+from monitor.health_checker import HealthChecker
+from recovery.recovery_engine import RecoveryEngine
+from proxy.proxy_server import ProxyServer, ProxyRequest
+from state_store.snapshot_engine import SnapshotEngine
+from recovery.disaster_restore import DisasterRestore
+
 
 app = Flask(__name__, static_folder="dashboard", static_url_path="")
 CORS(app)
 
-# ── Architecture Models (Section 1) ────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════
+#  GLOBAL STATE
+# ═══════════════════════════════════════════════════════════════════
 
-# ── Architecture Models with Semantic Roles ──────────────────────────
-# Each role has a CENTER in 4D vector space.  Nodes of the same role
-# get vectors tightly clustered around that center (spread ±0.08).
-# Different roles are widely separated (centers ≥0.5 apart).
+cluster: Cluster = None
+failure_detector: FailureDetector = None
+health_checker: HealthChecker = None
+recovery_engine: RecoveryEngine = None
+proxy_server: ProxyServer = None
+snapshot_engine: SnapshotEngine = None
+disaster_restore: DisasterRestore = None
 
-ARCHITECTURES = {
-    "microservice": {
-        "label": "Microservice Architecture",
-        "seed": 42, "dim": 4, "latency": "low", "fail_prob": 0.02,
-        "roles": {
-            "api_gateway":  {"center": [0.95, 0.95, 0.95, 0.5], "count": 3,  "color": "cyan"},
-            "auth_service": {"center": [0.05, 0.05, 0.05, 0.5], "count": 3,  "color": "purple"},
-            "compute":      {"center": [0.05, 0.95, 0.05, 0.5], "count": 5,  "color": "orange"},
-            "database":     {"center": [0.95, 0.05, 0.95, 0.5], "count": 4,  "color": "emerald"},
-            "cache_proxy":  {"center": [0.5, 0.5, 0.5, 0.5],   "count": 5,  "color": "pink"},
-        }
-    },
-    "edge": {
-        "label": "Edge Computing Network",
-        "seed": 77, "dim": 4, "latency": "variable", "fail_prob": 0.08,
-        "roles": {
-            "edge_proxy":   {"center": [0.95, 0.05, 0.05, 0.5], "count": 8, "color": "cyan"},
-            "fog_compute":  {"center": [0.05, 0.95, 0.95, 0.5], "count": 7, "color": "purple"},
-            "cdn_cache":    {"center": [0.5, 0.95, 0.05, 0.5], "count": 6, "color": "orange"},
-            "sensor_hub":   {"center": [0.05, 0.05, 0.95, 0.5], "count": 5, "color": "emerald"},
-            "cloud_bridge": {"center": [0.95, 0.95, 0.5, 0.5], "count": 4, "color": "pink"},
-        }
-    },
-    "cloud": {
-        "label": "Cloud Cluster Infrastructure",
-        "seed": 99, "dim": 4, "latency": "ultra-low", "fail_prob": 0.01,
-        "roles": {
-            "load_balancer":{"center": [0.95, 0.5, 0.05, 0.5], "count": 5,  "color": "cyan"},
-            "app_server":   {"center": [0.05, 0.95, 0.5, 0.5], "count": 10, "color": "purple"},
-            "db_replica":   {"center": [0.05, 0.05, 0.95, 0.5], "count": 8,  "color": "orange"},
-            "object_store": {"center": [0.5, 0.05, 0.5, 0.95], "count": 7,  "color": "emerald"},
-            "queue_worker": {"center": [0.05, 0.5, 0.05, 0.05], "count": 10, "color": "pink"},
-        }
-    },
-    "iot": {
-        "label": "IoT Distributed Mesh",
-        "seed": 55, "dim": 4, "latency": "high", "fail_prob": 0.15,
-        "roles": {
-            "sensor":       {"center": [0.05, 0.05, 0.05, 0.05], "count": 15, "color": "cyan"},
-            "actuator":     {"center": [0.95, 0.05, 0.95, 0.05], "count": 10, "color": "purple"},
-            "gateway":      {"center": [0.5, 0.95, 0.5, 0.95], "count": 5,  "color": "orange"},
-            "edge_proc":    {"center": [0.05, 0.5, 0.95, 0.5], "count": 10, "color": "emerald"},
-            "aggregator":   {"center": [0.95, 0.95, 0.05, 0.5], "count": 10, "color": "pink"},
-        }
-    },
-    "hpc": {
-        "label": "HPC Distributed Cluster",
-        "seed": 33, "dim": 4, "latency": "near-zero", "fail_prob": 0.001,
-        "roles": {
-            "scheduler":    {"center": [0.95, 0.95, 0.5, 0.5], "count": 3,  "color": "cyan"},
-            "compute_node": {"center": [0.05, 0.05, 0.5, 0.5], "count": 10, "color": "purple"},
-            "storage_node": {"center": [0.5, 0.5, 0.95, 0.05], "count": 5,  "color": "orange"},
-            "interconnect": {"center": [0.5, 0.5, 0.05, 0.95], "count": 4,  "color": "emerald"},
-            "monitor":      {"center": [0.95, 0.05, 0.05, 0.95], "count": 3,  "color": "pink"},
-        }
-    }
-}
-
-# Role color name → index mapping (matches CLUSTER_COLORS in app.js)
-ROLE_COLOR_INDEX = {"cyan": 0, "purple": 1, "orange": 2, "emerald": 3, "pink": 4, "yellow": 5}
-
-# ── Traditional Algorithm (Section 10) ──────────────────────────────
-
-def run_traditional_route(network, start_id, target_vector, max_hops=50):
-    """Run simple distance-only greedy routing (no load/trust awareness)."""
-    start = network.get_node(start_id)
-    if not start:
-        return {"success": False, "path": [], "total_hops": 0}
-
-    current = start
-    path = [current.id]
-    visited = {current.id}
-
-    for step in range(max_hops):
-        current_dist = euclidean_distance(list(current.vector), target_vector)
-
-        # Check termination: local minimum
-        best_nb = None
-        best_dist = current_dist
-        for nb in current.neighbors:
-            if not nb.alive or nb.id in visited:
-                continue
-            d = euclidean_distance(list(nb.vector), target_vector)
-            if d < best_dist:
-                best_dist = d
-                best_nb = nb
-
-        if best_nb is None:
-            # Reached local minimum or no unvisited closer neighbor
-            return {"success": True, "path": path, "total_hops": len(path)}
-
-        visited.add(best_nb.id)
-        path.append(best_nb.id)
-        current = best_nb
-
-    return {"success": False, "path": path, "total_hops": max_hops}
-
-# ── Global State ──────────────────────────────────────────────────
-
-current_arch = "microservice"
-network = None
-engine_adaptive = RoutingEngine()
-sim_adaptive = None
-service_grouping = None
-trust_system = TrustSystem()
-observability = Observability()
-health_monitor = None
-
-node_positions = {} # id -> {x, y} for layouts
-node_clusters = {}  # id -> cluster index
-node_roles = {}     # id -> role name
-
-def init_system(mode="microservice"):
-    """
-    Build a semantically-clustered network for the given architecture.
-
-    SEMANTIC CONSTRAINT:
-    - Nodes in the SAME section (same role) have VERY CLOSE dimensional values:
-      same role center + tiny perturbation (spread ±0.015) so they cluster tightly.
-    - Nodes in DIFFERENT sections are SEPARATED: each role has a distinct center
-      (≥0.5 apart in vector space), so other services do not sit close to another
-      section's nodes in the structure.
-    Layout is a 2D projection of the 4D vectors so the graph reflects this separation.
-    """
-    global network, sim_adaptive, current_arch, node_positions, node_clusters, node_roles
-    current_arch = mode
-    arch = ARCHITECTURES[mode]
-    rng = random.Random(arch["seed"])
-    dim = arch["dim"]
-    roles = arch["roles"]
-
-    # --- Step 1: Generate nodes with role-based clustered vectors ---
-    global network, sim_adaptive, service_grouping, health_monitor
-    network = Network()
-    node_positions = {}
-    node_clusters = {}
-    node_roles = {}
-    
-    # Same-section spread: keep nodes in same role VERY close in dimensional values
-    SAME_SECTION_SPREAD = 0.015  # ±0.015 so same-role vectors stay tightly clustered
-    # Role centers in ARCHITECTURES are already separated (different sections = far apart)
-    # Layout: minimal spacing so nodes don't overlap, but very little—priority to clustering
-    CLUSTER_RADIUS = 22  # pixels from section center; small = tight cluster
-    MIN_NODE_SPACING = 18  # minimum gap between nodes in same section
-
-    node_idx = 0
-    role_idx = 0
-    for role_name, role_cfg in roles.items():
-        center = role_cfg["center"]
-        count = role_cfg["count"]
-        color_idx = ROLE_COLOR_INDEX.get(role_cfg["color"], role_idx)
-        # 2D center for this section (for layout)
-        cx = (center[0] - 0.5) * 800
-        cy = (center[1] - 0.5) * 600
-
-        for j in range(count):
-            # Vector = role center + tiny perturbation only (same section = very close)
-            vec = []
-            for d_ in range(dim):
-                v_ = center[d_] + rng.uniform(-SAME_SECTION_SPREAD, SAME_SECTION_SPREAD)
-                vec.append(max(0.0, min(1.0, v_)))
-            # No blend with other embeddings: dimensional position is purely by section
-
-            node_id = f"N{node_idx:03d}"
-            node = Node(
-                node_id=node_id,
-                vector=vec,
-                role=role_name,
-                url=f"http://{node_id.lower()}:{8080 + node_idx}",
-                capacity=rng.uniform(15.0, 25.0),
-                trust=1.0,
-                latency=rng.uniform(5.0, 50.0)
-            )
-            network.nodes.append(node)
-            network._node_map[node_id] = node
-
-            # 2D position: tight cluster, minimal spacing so no overlap
-            # Place nodes in a small circle around section center (even spacing)
-            if count <= 1:
-                dx, dy = 0.0, 0.0
-            else:
-                angle = 2 * math.pi * j / count
-                dx = CLUSTER_RADIUS * math.cos(angle)
-                dy = CLUSTER_RADIUS * math.sin(angle)
-            node_positions[node_id] = {
-                "x": cx + dx,
-                "y": cy + dy,
-            }
-            node_clusters[node_id] = color_idx
-            node_roles[node_id] = role_name
-            node_idx += 1
-
-        role_idx += 1
-
-    # --- Step 2: Connect via hybrid topology (KNN + Delaunay) ---
-    vectors = [list(n.vector) for n in network.nodes]
-    network._connect_hybrid(vectors, k=4)
-
-    # --- Step 3: Set up the simulation engine with all components ---
-    service_grouping = ServiceGrouping(network)
-    sim_adaptive = Simulation(
-        network,
-        engine_adaptive,
-        service_grouping=service_grouping,
-        trust_system=trust_system,
-        observability=observability
-    )
-    
-    # --- Step 4: Start health monitor ---
-    health_monitor = HealthMonitor(network)
-    health_monitor.start()
+# SSE event queue for real-time dashboard updates
+sse_events = []
+sse_lock = threading.Lock()
 
 
-init_system("microservice")
+def push_sse_event(event_type: str, data: dict):
+    """Push an event to the SSE stream for the dashboard."""
+    with sse_lock:
+        sse_events.append({
+            "type": event_type,
+            "data": data,
+            "timestamp": time.time(),
+        })
+        # Keep last 200 events
+        if len(sse_events) > 200:
+            del sse_events[:100]
 
-metrics = {
-    "adaptive": {"total": 0, "success": 0, "hops": 0, "decision_time": 0},
-    "trad": {"total": 0, "success": 0, "hops": 0, "decision_time": 0},
-    "routes": []
-}
 
-# ── API Endpoints ─────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════
+#  SYSTEM INITIALIZATION
+# ═══════════════════════════════════════════════════════════════════
+
+def init_system(config_path: str = None):
+    """Initialize the entire DR platform from a config file."""
+    global cluster, failure_detector, health_checker, recovery_engine
+    global proxy_server, snapshot_engine, disaster_restore
+
+    # Load config
+    if config_path is None:
+        config_path = os.path.join(
+            os.path.dirname(__file__), "config", "default_cluster.json"
+        )
+    with open(config_path) as f:
+        config = json.load(f)
+
+    # ── Step 1: Create cluster ───────────────────────────────────
+    cluster = Cluster(name=config.get("cluster_name", "k8s-cluster"))
+    push_sse_event("system", {"message": "Initializing cluster..."})
+
+    # ── Step 2: Create nodes ─────────────────────────────────────
+    for node_cfg in config.get("nodes", []):
+        node = KubeNode(
+            name=node_cfg["name"],
+            cpu_cores=node_cfg.get("cpu_cores", 4),
+            memory_gb=node_cfg.get("memory_gb", 8.0),
+            max_pods=node_cfg.get("max_pods", 30),
+        )
+        cluster.add_node(node)
+
+    # ── Step 3: Create deployments and schedule pods ─────────────
+    for dep_cfg in config.get("deployments", []):
+        dep = Deployment(
+            name=dep_cfg["name"],
+            image=dep_cfg.get("image", "app:latest"),
+            replicas=dep_cfg.get("replicas", 3),
+            labels=dep_cfg.get("labels", {}),
+        )
+        cluster.create_deployment(dep)
+
+    # ── Step 4: Create services ──────────────────────────────────
+    for svc_cfg in config.get("services", []):
+        svc_type = ServiceType.CLUSTER_IP
+        if svc_cfg.get("type") == "LoadBalancer":
+            svc_type = ServiceType.LOAD_BALANCER
+        elif svc_cfg.get("type") == "NodePort":
+            svc_type = ServiceType.NODE_PORT
+
+        svc = Service(
+            name=svc_cfg["name"],
+            selector=svc_cfg.get("selector", {}),
+            port=svc_cfg.get("port", 80),
+            service_type=svc_type,
+        )
+        cluster.create_service(svc)
+
+    # ── Step 5: Wire up all subsystems ───────────────────────────
+    failure_detector = FailureDetector(cluster, check_interval=3.0)
+    health_checker = HealthChecker(cluster, interval=2.0)
+    recovery_engine = RecoveryEngine(cluster)
+    proxy_server = ProxyServer(cluster)
+    snapshot_engine = SnapshotEngine(cluster, interval=30.0)
+    disaster_restore = DisasterRestore(snapshot_engine)
+
+    # Connect failure detector → recovery engine (auto-heal pipeline)
+    def on_failure_detected(event):
+        recovery_engine.handle_failure(event)
+        push_sse_event("failure", event.to_dict())
+
+    failure_detector.on_failure(on_failure_detected)
+
+    # ── Step 6: Start background threads ─────────────────────────
+    health_checker.start()
+    failure_detector.start()
+    snapshot_engine.start()
+
+    # Take initial snapshot
+    snapshot_engine.take_snapshot()
+
+    push_sse_event("system", {
+        "message": f"Cluster '{cluster.name}' initialized: "
+                   f"{len(cluster.nodes)} nodes, {len(cluster.deployments)} deployments, "
+                   f"{len(cluster.services)} services, {len(cluster.all_pods())} pods"
+    })
+
+    print(f"\n{'='*60}")
+    print(f"  KUBERNETES DR PLATFORM — {cluster.name}")
+    print(f"  Nodes: {len(cluster.nodes)}  |  Deployments: {len(cluster.deployments)}")
+    print(f"  Services: {len(cluster.services)}  |  Pods: {len(cluster.all_pods())}")
+    print(f"{'='*60}\n")
+
+
+# Initialize on module load
+init_system()
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  DASHBOARD
+# ═══════════════════════════════════════════════════════════════════
 
 @app.route("/")
 def serve_dashboard():
     return send_from_directory("dashboard", "index.html")
 
-@app.route("/api/network")
-def get_network():
-    nodes = []
-    for n in network.nodes:
-        pos = node_positions.get(n.id, {"x": 0, "y": 0})
-        nodes.append({
-            "id": n.id,
-            "url": n.url,
-            "vector": [round(v, 3) for v in n.vector],
-            "load": n.load,
-            "capacity": n.capacity,
-            "load_ratio": round(n.get_load_ratio(), 3),
-            "trust": round(n.trust, 2),
-            "latency": n.latency,
-            "alive": n.alive,
-            "x": pos["x"],
-            "y": pos["y"],
-            "cluster": node_clusters.get(n.id, 0),
-            "role": node_roles.get(n.id, "unknown"),
-            "neighbors": [nb.id for nb in n.neighbors]
-        })
-    
-    edges = []
-    seen = set()
-    for n in network.nodes:
-        for nb in n.neighbors:
-            pair = tuple(sorted([n.id, nb.id]))
-            if pair not in seen:
-                seen.add(pair)
-                edges.append({"source": n.id, "target": nb.id})
-    
-    # Build roles summary for legend
-    arch = ARCHITECTURES[current_arch]
-    roles_summary = []
-    for rname, rcfg in arch["roles"].items():
-        roles_summary.append({
-            "name": rname,
-            "color_idx": ROLE_COLOR_INDEX.get(rcfg["color"], 0),
-            "count": rcfg["count"],
-            "center": rcfg["center"]
-        })
-                
+
+# ═══════════════════════════════════════════════════════════════════
+#  SSE — Real-time event stream
+# ═══════════════════════════════════════════════════════════════════
+
+@app.route("/api/events/stream")
+def event_stream():
+    """Server-Sent Events stream for real-time dashboard updates."""
+    def generate():
+        last_idx = len(sse_events)
+        while True:
+            with sse_lock:
+                new_events = sse_events[last_idx:]
+                last_idx = len(sse_events)
+            for ev in new_events:
+                yield f"data: {json.dumps(ev)}\n\n"
+            time.sleep(1)
+
+    return Response(generate(), mimetype="text/event-stream")
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  CLUSTER STATE ENDPOINTS
+# ═══════════════════════════════════════════════════════════════════
+
+@app.route("/api/cluster")
+def get_cluster():
+    """Get full cluster state."""
+    return jsonify(cluster.to_dict())
+
+
+@app.route("/api/nodes")
+def get_nodes():
+    """Get all node details."""
+    return jsonify({"nodes": [n.to_dict() for n in cluster.nodes]})
+
+
+@app.route("/api/pods")
+def get_pods():
+    """Get all pod details."""
+    return jsonify({"pods": [p.to_dict() for p in cluster.all_pods()]})
+
+
+@app.route("/api/deployments")
+def get_deployments():
+    return jsonify({"deployments": [d.to_dict() for d in cluster.deployments]})
+
+
+@app.route("/api/services")
+def get_services():
+    all_p = cluster.all_pods()
+    return jsonify({"services": [s.to_dict(all_p) for s in cluster.services]})
+
+
+@app.route("/api/events")
+def get_events():
+    count = request.args.get("count", 50, type=int)
+    return jsonify({"events": cluster.get_recent_events(count)})
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  DISASTER SIMULATION ENDPOINTS (Section 11)
+# ═══════════════════════════════════════════════════════════════════
+
+@app.route("/api/simulate/kill-pod", methods=["POST"])
+def kill_pod():
+    """Kill a specific pod or a random one."""
+    data = request.json or {}
+    pod_name = data.get("pod")
+
+    if pod_name:
+        target = None
+        for p in cluster.all_pods():
+            if p.name == pod_name:
+                target = p
+                break
+        if not target:
+            return jsonify({"error": f"Pod '{pod_name}' not found"}), 404
+    else:
+        running_pods = [p for p in cluster.all_pods() if p.status == PodStatus.RUNNING]
+        if not running_pods:
+            return jsonify({"error": "No running pods to kill"}), 400
+        target = random.choice(running_pods)
+
+    target.crash()
+    push_sse_event("simulation", {"action": "kill-pod", "pod": target.name, "node": target.node_name})
+    cluster._log_event("Simulation", f"Pod '{target.name}' killed (simulated crash)", "Warning")
+
     return jsonify({
-        "architecture": current_arch,
-        "label": arch["label"],
-        "latency": arch["latency"],
-        "fail_prob": arch["fail_prob"],
-        "roles": roles_summary,
-        "nodes": nodes,
-        "edges": edges
+        "action": "kill-pod",
+        "pod": target.name,
+        "node": target.node_name,
+        "status": target.status.value,
     })
+
+
+@app.route("/api/simulate/kill-node", methods=["POST"])
+def kill_node():
+    """Kill a specific node or a random one."""
+    data = request.json or {}
+    node_name = data.get("node")
+
+    if node_name:
+        target = cluster.get_node(node_name)
+        if not target:
+            return jsonify({"error": f"Node '{node_name}' not found"}), 404
+    else:
+        ready = cluster.get_ready_nodes()
+        if not ready:
+            return jsonify({"error": "No ready nodes to kill"}), 400
+        target = random.choice(ready)
+
+    affected_pods = [p.name for p in target.pods]
+    target.mark_not_ready()
+    push_sse_event("simulation", {
+        "action": "kill-node", "node": target.name,
+        "affected_pods": affected_pods,
+    })
+    cluster._log_event("Simulation", f"Node '{target.name}' killed — {len(affected_pods)} pods affected", "Critical")
+
+    return jsonify({
+        "action": "kill-node",
+        "node": target.name,
+        "affected_pods": affected_pods,
+        "status": target.status.value,
+    })
+
+
+@app.route("/api/simulate/network-delay", methods=["POST"])
+def network_delay():
+    """Inject network latency into random pods."""
+    data = request.json or {}
+    delay_ms = data.get("delay_ms", 500.0)
+    count = data.get("count", 5)
+
+    running = [p for p in cluster.all_pods() if p.status == PodStatus.RUNNING]
+    targets = random.sample(running, min(count, len(running)))
+
+    affected = []
+    for pod in targets:
+        pod.latency_ms = delay_ms + random.uniform(0, 100)
+        affected.append({"pod": pod.name, "latency_ms": round(pod.latency_ms, 1)})
+
+    push_sse_event("simulation", {"action": "network-delay", "affected": affected})
+    cluster._log_event("Simulation", f"Network delay injected into {len(affected)} pods", "Warning")
+
+    return jsonify({"action": "network-delay", "affected": affected})
+
+
+@app.route("/api/simulate/cluster-crash", methods=["POST"])
+def cluster_crash():
+    """Simulate a full cluster crash — all nodes go NotReady."""
+    affected = []
+    for node in cluster.nodes:
+        node.mark_not_ready()
+        affected.append(node.name)
+
+    push_sse_event("simulation", {"action": "cluster-crash", "nodes_affected": affected})
+    cluster._log_event("Simulation", "FULL CLUSTER CRASH — all nodes down", "Critical")
+
+    return jsonify({
+        "action": "cluster-crash",
+        "nodes_affected": affected,
+        "message": "All nodes marked NotReady. Use /api/restore to rebuild.",
+    })
+
+
+@app.route("/api/simulate/recover-node", methods=["POST"])
+def recover_node():
+    """Manually recover a specific node."""
+    data = request.json or {}
+    node_name = data.get("node")
+
+    if not node_name:
+        return jsonify({"error": "Provide 'node' name"}), 400
+
+    node = cluster.get_node(node_name)
+    if not node:
+        return jsonify({"error": f"Node '{node_name}' not found"}), 404
+
+    node.mark_ready()
+    # Restart pods on the recovered node
+    for pod in node.pods:
+        pod.start()
+
+    push_sse_event("recovery", {"action": "node-recovered", "node": node_name})
+    cluster._log_event("Recovery", f"Node '{node_name}' manually recovered")
+
+    return jsonify({"action": "recover-node", "node": node_name, "status": node.status.value})
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  PROXY / TRAFFIC ROUTING
+# ═══════════════════════════════════════════════════════════════════
 
 @app.route("/api/route", methods=["POST"])
-def run_comparison_route():
-    """Run both Adaptive and Traditional algorithms for comparison.
-    
-    SECTION-BOUNDARY RULE:
-    If every node in the target section is dead, routing MUST NOT cross
-    into another section.  Instead, it returns failure and routes back
-    to the source node.
-    """
-    data = request.json
-    start_id = data.get("start", "N000")
-    target = data.get("target", [0.5, 0.5, 0.5, 0.5])
-    
-    start_node = network.get_node(start_id)
-    if not start_node:
-        return jsonify({"error": "Start node not found"}), 404
-    
-    # --- Identify the target section (closest role center) ---
-    arch = ARCHITECTURES[current_arch]
-    target_role = None
-    best_role_dist = float("inf")
-    for rname, rcfg in arch["roles"].items():
-        d = euclidean_distance(target, rcfg["center"])
-        if d < best_role_dist:
-            best_role_dist = d
-            target_role = rname
-    
-    # --- Check if any alive node exists in that section ---
-    section_nodes = [n for n in network.nodes if node_roles.get(n.id) == target_role]
-    alive_in_section = [n for n in section_nodes if n.alive]
-    section_all_dead = len(alive_in_section) == 0
-    
-    if section_all_dead:
-        # ALL nodes in target section are dead → route back to source
-        return jsonify({
-            "section_failure": True,
-            "target_role": target_role,
-            "message": f"All {len(section_nodes)} nodes in '{target_role}' section are dead. Route returns to source.",
-            "adaptive": {
-                "success": False,
-                "path": [start_id, start_id],  # round-trip back to source
-                "total_hops": 0,
-                "decision_time": 0,
-                "hops": [],
-                "section_failed": True
-            },
-            "trad": {
-                "success": False,
-                "path": [start_id],
-                "total_hops": 0,
-                "decision_time": 0,
-                "section_failed": True
-            }
-        })
-        
-    # Create request with semantic text
-    request_text = data.get("request_text", "database query")
-    req = Request.create(request_text, client_id=data.get("client_id", "web_client"))
-    
-    # Time Adaptive
-    t0 = time.perf_counter()
-    res_adaptive = sim_adaptive.route_request(start_node, req)
-    t1 = time.perf_counter()
-    
-    # Time Traditional (standalone function, doesn't need Simulation)
-    t2 = time.perf_counter()
-    res_trad = run_traditional_route(network, start_id, target)
-    t3 = time.perf_counter()
-    
-    # --- Section-boundary validation ---
-    # If adaptive route ended at a node OUTSIDE the target section,
-    # that means it crossed a boundary → treat as section failure
-    adaptive_path = res_adaptive.path
-    if adaptive_path:
-        final_node_id = adaptive_path[-1]
-        final_role = node_roles.get(final_node_id, "")
-        if final_role != target_role:
-            # Crossed section boundary → route back to source
-            adaptive_path = adaptive_path + list(reversed(adaptive_path[:-1]))
-            res_adaptive.success = False
-    
-    trad_path = res_trad["path"]
-    if trad_path:
-        final_trad = trad_path[-1]
-        if node_roles.get(final_trad, "") != target_role:
-            trad_path = trad_path + list(reversed(trad_path[:-1]))
-            res_trad["success"] = False
-    
-    # Update metrics
-    metrics["adaptive"]["total"] += 1
-    if res_adaptive.success:
-        metrics["adaptive"]["success"] += 1
-        metrics["adaptive"]["hops"] += res_adaptive.total_hops
-        metrics["adaptive"]["decision_time"] += (t1 - t0)
-        
-    metrics["trad"]["total"] += 1
-    if res_trad["success"]:
-        metrics["trad"]["success"] += 1
-        metrics["trad"]["hops"] += res_trad["total_hops"]
-        metrics["trad"]["decision_time"] += (t3 - t2)
+def route_traffic():
+    """Route traffic through the proxy to a service."""
+    data = request.json or {}
+    service_name = data.get("service", "api-gateway-svc")
+    count = data.get("count", 1)
 
-    # Build adaptive hops detail
-    adaptive_hops = []
-    for h in res_adaptive.hops:
-        hop_data = {
-            "node_id": h.node_id,
-            "distance": h.distance_to_target,
-            "chosen_next": h.chosen_next,
-            "is_terminal": h.is_terminal,
-            "scores": h.scores
-        }
-        adaptive_hops.append(hop_data)
-
-    return jsonify({
-        "target_role": target_role,
-        "section_failure": False,
-        "adaptive": {
-            "success": res_adaptive.success,
-            "path": adaptive_path,
-            "total_hops": res_adaptive.total_hops,
-            "decision_time": (t1 - t0) * 1000,
-            "hops": adaptive_hops
-        },
-        "trad": {
-            "success": res_trad["success"],
-            "path": trad_path,
-            "total_hops": res_trad["total_hops"],
-            "decision_time": (t3 - t2) * 1000
-        }
-    })
-
-@app.route("/api/node/<id>/toggle", methods=["POST"])
-def toggle_node(id):
-    node = network.get_node(id)
-    if not node: return jsonify({"error": "Not found"}), 404
-    
-    # 3-State Cycle: 
-    # Normal (alive, load<12) -> Loaded (load=12) -> Dead (alive=False)
-    if node.alive:
-        if node.load < 12:
-            node.load = 12
-            state = "LOADED"
-        else:
-            node.fail()
-            state = "DEAD"
+    if count == 1:
+        req = ProxyRequest(service_name)
+        resp = proxy_server.route_request(req)
+        push_sse_event("traffic", resp.to_dict())
+        return jsonify(resp.to_dict())
     else:
-        node.recover()
-        node.load = 0
-        state = "ALIVE"
-        
-    return jsonify({"id": id, "alive": node.alive, "load": node.load, "state": state})
+        results = proxy_server.route_batch(service_name, count)
+        summary = {
+            "service": service_name,
+            "total": len(results),
+            "success": sum(1 for r in results if r.success),
+            "failed": sum(1 for r in results if not r.success),
+            "responses": [r.to_dict() for r in results[:10]],  # first 10 only
+        }
+        return jsonify(summary)
 
-@app.route("/api/node/<id>/trust", methods=["POST"])
-def set_trust(id):
-    node = network.get_node(id)
-    if not node: return jsonify({"error": "Not found"}), 404
-    data = request.json
-    node.trust = max(0, min(1, float(data.get("trust", 1))))
-    return jsonify({"id": id, "trust": node.trust})
 
-@app.route("/api/simulate/failure", methods=["POST"])
-def simulate_failure():
-    """Simulate complex failure patterns (Section 6 & 12)."""
-    data = request.json
-    fail_type = data.get("type", "node") # node, cluster, partition
-    
-    rng = random.Random()
-    affected = []
-    
-    if fail_type == "node":
-        target = rng.choice(network.nodes)
-        target.fail()
-        affected.append(target.id)
-    elif fail_type == "cluster":
-        # Fail 20% of nodes in a geographic proximity
-        center = rng.choice(network.nodes)
-        dists = []
-        for n in network.nodes:
-            d = euclidean_distance(list(center.vector), list(n.vector))
-            dists.append((d, n))
-        dists.sort(key=lambda x: x[0])
-        for _, n in dists[:int(len(network.nodes)*0.25)]:
-            n.fail()
-            affected.append(n.id)
-    elif fail_type == "partition":
-        # Fail nodes with high degree to split the graph
-        # For simplicity, we fail nodes in the 'middle' of the generated layout
-        mid_x = sum(node_positions[n.id]["x"] for n in network.nodes) / len(network.nodes)
-        for n in network.nodes:
-            if abs(node_positions[n.id]["x"] - mid_x) < 50:
-                n.fail()
-                affected.append(n.id)
-                
-    return jsonify({"status": "failure_simulated", "type": fail_type, "affected": affected})
+@app.route("/api/proxy/stats")
+def proxy_stats():
+    return jsonify(proxy_server.get_all_stats())
 
-@app.route("/api/architecture", methods=["POST"])
-def switch_arch():
-    data = request.json
-    mode = data.get("mode", "microservice")
-    if mode not in ARCHITECTURES:
-        return jsonify({"error": "Invalid mode"}), 400
-    init_system(mode)
-    return jsonify({"status": "switched", "mode": mode})
 
-@app.route("/api/reset", methods=["POST"])
-def reset():
-    init_system(current_arch)
-    return jsonify({"status": "reset"})
+# ═══════════════════════════════════════════════════════════════════
+#  SNAPSHOT / RESTORE
+# ═══════════════════════════════════════════════════════════════════
+
+@app.route("/api/snapshot", methods=["POST"])
+def take_snapshot():
+    """Manually trigger a snapshot."""
+    filename = snapshot_engine.take_snapshot()
+    push_sse_event("snapshot", {"action": "created", "filename": filename})
+    return jsonify({"status": "snapshot_created", "filename": filename})
+
+
+@app.route("/api/snapshots")
+def list_snapshots():
+    return jsonify({"snapshots": snapshot_engine.list_snapshots()})
+
+
+@app.route("/api/restore", methods=["POST"])
+def restore_cluster():
+    """Restore cluster from the latest snapshot, or a specific one."""
+    data = request.json or {}
+    filename = data.get("filename")
+
+    # Stop background threads before restore
+    failure_detector.stop()
+    health_checker.stop()
+
+    if filename:
+        result = disaster_restore.restore_from_file(filename)
+    else:
+        result = disaster_restore.restore_from_latest()
+
+    # Restart background threads
+    health_checker.start()
+    failure_detector.start()
+
+    push_sse_event("restore", result)
+    return jsonify(result)
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  HEALTH / METRICS
+# ═══════════════════════════════════════════════════════════════════
+
+@app.route("/api/health")
+def cluster_health():
+    """Get cluster-wide health summary."""
+    return jsonify(health_checker.get_cluster_health_summary())
+
+
+@app.route("/api/health/<pod_name>")
+def pod_health(pod_name):
+    """Get health history for a specific pod."""
+    rec = health_checker.get_pod_health(pod_name)
+    if not rec:
+        return jsonify({"error": "Pod not found"}), 404
+    return jsonify(rec)
+
 
 @app.route("/api/metrics")
 def get_metrics():
-    def calc(m):
-        return {
-            "success_rate": round(m["success"] / m["total"] * 100, 1) if m["total"] > 0 else 0,
-            "avg_hops": round(m["hops"] / m["success"], 2) if m["success"] > 0 else 0,
-            "avg_time": round(m["decision_time"] / m["total"] * 1000, 3) if m["total"] > 0 else 0
-        }
-    
-    # Get observability metrics
-    obs_metrics = observability.get_metrics_summary() if observability else {}
-    
+    """Get comprehensive platform metrics."""
     return jsonify({
-        "adaptive": calc(metrics["adaptive"]),
-        "trad": calc(metrics["trad"]),
-        "alive_nodes": sum(1 for n in network.nodes if n.alive),
-        "total_nodes": len(network.nodes),
-        "observability": obs_metrics
+        "cluster": cluster.to_dict(),
+        "health": health_checker.get_cluster_health_summary(),
+        "failures": failure_detector.get_failure_summary(),
+        "recovery": recovery_engine.get_recovery_summary(),
+        "proxy": proxy_server.get_all_stats(),
+        "snapshots": len(snapshot_engine.list_snapshots()),
+        "restores": len(disaster_restore.get_restore_history()),
     })
+
+
+@app.route("/api/failures")
+def get_failures():
+    return jsonify({
+        "active": failure_detector.get_active_failures(),
+        "summary": failure_detector.get_failure_summary(),
+    })
+
+
+@app.route("/api/recovery")
+def get_recovery():
+    return jsonify(recovery_engine.get_recovery_summary())
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  AUTOMATION SCRIPTS (Section 12)
+# ═══════════════════════════════════════════════════════════════════
+
+@app.route("/api/scale", methods=["POST"])
+def scale_deployment():
+    """Scale a deployment to a new replica count."""
+    data = request.json or {}
+    dep_name = data.get("deployment")
+    replicas = data.get("replicas", 3)
+
+    dep = cluster.get_deployment(dep_name)
+    if not dep:
+        return jsonify({"error": f"Deployment '{dep_name}' not found"}), 404
+
+    old_count = dep.replicas_desired
+    dep.replicas_desired = replicas
+    recovery_engine._reconcile_deployment(dep)
+
+    push_sse_event("scale", {"deployment": dep_name, "old": old_count, "new": replicas})
+    cluster._log_event("Scale", f"Deployment '{dep_name}' scaled {old_count}→{replicas}")
+
+    return jsonify({
+        "deployment": dep_name,
+        "old_replicas": old_count,
+        "new_replicas": replicas,
+        "pods": [p.name for p in dep.pods],
+    })
+
+
+@app.route("/api/reset", methods=["POST"])
+def reset_system():
+    """Full system reset from config."""
+    failure_detector.stop()
+    health_checker.stop()
+    snapshot_engine.stop()
+    init_system()
+    return jsonify({"status": "reset", "message": "System reinitialized from config"})
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  ENTRY POINT
+# ═══════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     app.run(debug=True, port=8000)
