@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AVRS — Cross-Architecture Algorithm Analysis</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+    <!-- ═══════════ HEADER ═══════════ -->
+    <header class="header">
+        <div class="header-left">
+            <div class="logo-wrap">
+                <svg width="32" height="32" viewBox="0 0 36 36">
+                    <circle cx="18" cy="18" r="16" stroke="url(#g)" stroke-width="2" fill="none" opacity=".4" />
+                    <circle cx="18" cy="18" r="4" fill="url(#g)" />
+                    <defs>
+                        <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+                            <stop offset="0%" stop-color="#6366f1" />
+                            <stop offset="100%" stop-color="#06b6d4" />
+                        </linearGradient>
+                    </defs>
+                </svg>
+            </div>
+            <div>
+                <h1>Adaptive Routing Analysis</h1>
+                <span class="subtitle" id="archTitle">Microservice Architecture</span>
+            </div>
+        </div>
+
+        <div class="header-center">
+            <div class="arch-selector">
+                <button class="arch-btn active" onclick="switchMode('microservice')">Microservice</button>
+                <button class="arch-btn" onclick="switchMode('edge')">Edge</button>
+                <button class="arch-btn" onclick="switchMode('cloud')">Cloud</button>
+                <button class="arch-btn" onclick="switchMode('iot')">IoT Mesh</button>
+                <button class="arch-btn" onclick="switchMode('hpc')">HPC</button>
+            </div>
+        </div>
+
+        <div class="header-right">
+            <button class="btn btn-ghost" onclick="resetSystem()">↻ Reset</button>
+            <div id="statusDot" class="status-dot"></div>
+        </div>
+    </header>
+
+    <!-- ═══════════ MAIN ═══════════ -->
+    <main class="main-grid">
+
+        <!-- ─── LEFT: Controls & Analysis ─── -->
+        <aside class="sidebar sidebar-left">
+
+            <!-- Analysis Filters -->
+            <div class="panel-section">
+                <div class="section-title">Visual Analysis Overlays</div>
+                <div class="overlay-controls">
+                    <label class="overlay-item"><input type="checkbox" id="showLatency"
+                            onchange="toggleOverlay('latency')"> Latency Field</label>
+                    <label class="overlay-item"><input type="checkbox" id="showFailures"
+                            onchange="toggleOverlay('failures')"> Failure Zones</label>
+                    <label class="overlay-item"><input type="checkbox" id="showCongestion"
+                            onchange="toggleOverlay('congestion')"> Congestion</label>
+                    <label class="overlay-item"><input type="checkbox" id="showClusters"
+                            onchange="toggleOverlay('clusters')"> Node Clusters</label>
+                </div>
+            </div>
+
+            <!-- Route Control -->
+            <div class="panel-section">
+                <div class="section-title">Request Configuration</div>
+                <div class="form-group">
+                    <label>Source Node</label>
+                    <select id="startNode" class="input"></select>
+                </div>
+                <div class="form-group">
+                    <label>Target 4D Vector</label>
+                    <div class="vec-grid">
+                        <input type="number" id="v0" class="input" value="0.8" step="0.1">
+                        <input type="number" id="v1" class="input" value="0.8" step="0.1">
+                        <input type="number" id="v2" class="input" value="0.8" step="0.1">
+                        <input type="number" id="v3" class="input" value="0.8" step="0.1">
+                    </div>
+                </div>
+                <button class="btn btn-primary btn-full" onclick="runAnalysis()">Analyze Route</button>
+            </div>
+
+            <!-- Simulation Tools -->
+            <div class="panel-section">
+                <div class="section-title">Failure Simulation</div>
+                <div class="tool-grid">
+                    <button class="btn btn-ghost btn-sm" onclick="simFailure('node')">Node Crash</button>
+                    <button class="btn btn-ghost btn-sm" onclick="simFailure('cluster')">Cluster Outage</button>
+                    <button class="btn btn-ghost btn-sm" onclick="simFailure('partition')">Partition</button>
+                </div>
+                <div class="hint-text">Click nodes to toggle alive/dead. Same-role nodes failover within their section.
+                </div>
+            </div>
+
+            <!-- Semantic Roles Legend -->
+            <div class="panel-section">
+                <div class="section-title">Semantic Roles</div>
+                <div id="roleLegend" class="role-legend">
+                    <!-- Populated dynamically by updateUI() -->
+                </div>
+            </div>
+
+            <!-- Algorithm Comparison -->
+            <div class="panel-section">
+                <div class="section-title">Performance Comparison</div>
+                <div class="comp-table">
+                    <div class="comp-header">Metric</div>
+                    <div class="comp-header">Adaptive</div>
+                    <div class="comp-header">Traditional</div>
+
+                    <div>Success</div>
+                    <div id="m-ad-rate" class="accent-cyan">0%</div>
+                    <div id="m-tr-rate">0%</div>
+
+                    <div>Avg Hops</div>
+                    <div id="m-ad-hops" class="accent-cyan">0</div>
+                    <div id="m-tr-hops">0</div>
+
+                    <div>Latency (ms)</div>
+                    <div id="m-ad-time" class="accent-cyan">0</div>
+                    <div id="m-tr-time">0</div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- ─── CENTER: Graph ─── -->
+        <section class="viewport">
+            <div id="graphContainer" class="graph-container">
+                <canvas id="networkCanvas"></canvas>
+
+                <!-- Controls overlay -->
+                <div class="viewport-controls">
+                    <button class="btn-icon" onclick="zoom(1.2)">+</button>
+                    <button class="btn-icon" onclick="zoom(0.8)">-</button>
+                    <button class="btn-icon" onclick="resetZoom()">⟲</button>
+                </div>
+                <!-- Legend -->
+                <div class="graph-legend">
+                    <div class="leg-item"><span class="leg-dot bg-green"></span> Optimal</div>
+                    <div class="leg-item"><span class="leg-dot bg-amber"></span> Loaded</div>
+                    <div class="leg-item"><span class="leg-dot bg-rose"></span> Failure</div>
+                </div>
+            </div>
+
+            <!-- Timeline Controller -->
+            <div class="timeline-wrap">
+                <div class="tl-controls">
+                    <button onclick="tlStep(-1)">⏮</button>
+                    <button onclick="tlPlay()">▶</button>
+                    <button onclick="tlStep(1)">⏭</button>
+                </div>
+                <input type="range" id="tlSlider" min="0" max="100" value="0">
+                <div class="tl-status">FRAME: <span id="frameIdx">0</span> / <span id="frameCount">0</span></div>
+            </div>
+        </section>
+
+        <!-- ─── RIGHT: Intelligence & Log ─── -->
+        <aside class="sidebar sidebar-right" id="sidebarRight">
+            <div class="resize-handle" id="resizeHandle"></div>
+
+            <!-- Node Inspector (fixed panel, updates on hover) -->
+            <div class="panel-section node-inspector">
+                <div class="section-title">Node Inspector</div>
+                <div id="nodeInspector" class="inspector-body">
+                    <div class="empty-state">Hover over a node to inspect.</div>
+                </div>
+            </div>
+
+            <!-- Decision Intelligence -->
+            <div class="panel-section decision-panel">
+                <div class="section-title">Decision Intelligence</div>
+                <div id="decisionBody" class="panel-scroll">
+                    <div class="empty-state">Run analysis to see routing reasoning.</div>
+                </div>
+            </div>
+
+            <!-- Architecture Impact -->
+            <div class="panel-section impact-panel">
+                <div class="section-title">Architecture Impact Analysis</div>
+                <div id="impactBody" class="impact-stats">
+                    <div class="stat-item">
+                        <span class="stat-label">Connectivity Density</span>
+                        <span id="stat-density" class="stat-val">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Failure Probability</span>
+                        <span id="stat-fail" class="stat-val">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Topology Model</span>
+                        <span id="stat-topo" class="stat-val">-</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Event Log -->
+            <div class="panel-section log-panel">
+                <div class="section-title">Protocol Logs</div>
+                <div id="eventLog" class="log-scroll"></div>
+            </div>
+
+        </aside>
+
+    </main>
+
+    <script src="app.js"></script>
+</body>
+
+</html>
