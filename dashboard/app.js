@@ -488,16 +488,16 @@ async function switchMode(mode) {
 
 async function toggleNode(nodeId) {
     try {
-        const res = await fetch(API + `/api/node/${nodeId}/toggle`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" }
-        });
+        const res = await fetch(API + `/api/node/${nodeId}/toggle`, { method: "POST" });
         const data = await res.json();
-        // Update local node state immediately
-        const node = nodes.find(n => n.id === nodeId);
-        if (node) {
-            node.alive = data.alive;
-            logEvent(`Node ${nodeId}: ${data.alive ? '🟢 RECOVERED' : '🔴 KILLED'}`);
+        if (data.id) {
+            loadNetwork();
+            const stateLabels = {
+                'ALIVE': '🟢 RECOVERED',
+                'LOADED': '🟠 STRESSED (Amber)',
+                'DEAD': '🔴 KILLED'
+            };
+            logEvent(`Node ${nodeId}: ${stateLabels[data.state] || 'Updated'}`);
         }
     } catch (e) {
         logEvent(`Error toggling node: ${e.message}`);

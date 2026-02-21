@@ -38,55 +38,55 @@ ARCHITECTURES = {
         "label": "Microservice Architecture",
         "seed": 42, "dim": 4, "latency": "low", "fail_prob": 0.02,
         "roles": {
-            "api_gateway":  {"center": [0.8, 0.8, 0.2, 0.2], "count": 3,  "color": "cyan"},
-            "auth_service": {"center": [0.2, 0.8, 0.8, 0.2], "count": 3,  "color": "purple"},
-            "compute":      {"center": [0.2, 0.2, 0.2, 0.8], "count": 5,  "color": "orange"},
-            "database":     {"center": [0.8, 0.2, 0.8, 0.8], "count": 4,  "color": "emerald"},
-            "cache_proxy":  {"center": [0.5, 0.5, 0.2, 0.2], "count": 5,  "color": "pink"},
+            "api_gateway":  {"center": [0.95, 0.95, 0.95, 0.5], "count": 3,  "color": "cyan"},
+            "auth_service": {"center": [0.05, 0.05, 0.05, 0.5], "count": 3,  "color": "purple"},
+            "compute":      {"center": [0.05, 0.95, 0.05, 0.5], "count": 5,  "color": "orange"},
+            "database":     {"center": [0.95, 0.05, 0.95, 0.5], "count": 4,  "color": "emerald"},
+            "cache_proxy":  {"center": [0.5, 0.5, 0.5, 0.5],   "count": 5,  "color": "pink"},
         }
     },
     "edge": {
         "label": "Edge Computing Network",
         "seed": 77, "dim": 4, "latency": "variable", "fail_prob": 0.08,
         "roles": {
-            "edge_proxy":   {"center": [0.9, 0.1, 0.1, 0.5], "count": 8, "color": "cyan"},
-            "fog_compute":  {"center": [0.1, 0.9, 0.5, 0.1], "count": 7, "color": "purple"},
-            "cdn_cache":    {"center": [0.5, 0.5, 0.9, 0.1], "count": 6, "color": "orange"},
-            "sensor_hub":   {"center": [0.1, 0.1, 0.1, 0.9], "count": 5, "color": "emerald"},
-            "cloud_bridge": {"center": [0.9, 0.9, 0.5, 0.5], "count": 4, "color": "pink"},
+            "edge_proxy":   {"center": [0.95, 0.05, 0.05, 0.5], "count": 8, "color": "cyan"},
+            "fog_compute":  {"center": [0.05, 0.95, 0.95, 0.5], "count": 7, "color": "purple"},
+            "cdn_cache":    {"center": [0.5, 0.95, 0.05, 0.5], "count": 6, "color": "orange"},
+            "sensor_hub":   {"center": [0.05, 0.05, 0.95, 0.5], "count": 5, "color": "emerald"},
+            "cloud_bridge": {"center": [0.95, 0.95, 0.5, 0.5], "count": 4, "color": "pink"},
         }
     },
     "cloud": {
         "label": "Cloud Cluster Infrastructure",
         "seed": 99, "dim": 4, "latency": "ultra-low", "fail_prob": 0.01,
         "roles": {
-            "load_balancer":{"center": [0.9, 0.5, 0.1, 0.5], "count": 5,  "color": "cyan"},
-            "app_server":   {"center": [0.5, 0.9, 0.5, 0.1], "count": 10, "color": "purple"},
-            "db_replica":   {"center": [0.1, 0.1, 0.9, 0.5], "count": 8,  "color": "orange"},
-            "object_store": {"center": [0.5, 0.1, 0.5, 0.9], "count": 7,  "color": "emerald"},
-            "queue_worker": {"center": [0.1, 0.5, 0.1, 0.1], "count": 10, "color": "pink"},
+            "load_balancer":{"center": [0.95, 0.5, 0.05, 0.5], "count": 5,  "color": "cyan"},
+            "app_server":   {"center": [0.05, 0.95, 0.5, 0.5], "count": 10, "color": "purple"},
+            "db_replica":   {"center": [0.05, 0.05, 0.95, 0.5], "count": 8,  "color": "orange"},
+            "object_store": {"center": [0.5, 0.05, 0.5, 0.95], "count": 7,  "color": "emerald"},
+            "queue_worker": {"center": [0.05, 0.5, 0.05, 0.05], "count": 10, "color": "pink"},
         }
     },
     "iot": {
         "label": "IoT Distributed Mesh",
         "seed": 55, "dim": 4, "latency": "high", "fail_prob": 0.15,
         "roles": {
-            "sensor":       {"center": [0.1, 0.1, 0.1, 0.1], "count": 15, "color": "cyan"},
-            "actuator":     {"center": [0.9, 0.1, 0.9, 0.1], "count": 10, "color": "purple"},
-            "gateway":      {"center": [0.5, 0.9, 0.5, 0.9], "count": 5,  "color": "orange"},
-            "edge_proc":    {"center": [0.1, 0.5, 0.9, 0.5], "count": 10, "color": "emerald"},
-            "aggregator":   {"center": [0.9, 0.9, 0.1, 0.5], "count": 10, "color": "pink"},
+            "sensor":       {"center": [0.05, 0.05, 0.05, 0.05], "count": 15, "color": "cyan"},
+            "actuator":     {"center": [0.95, 0.05, 0.95, 0.05], "count": 10, "color": "purple"},
+            "gateway":      {"center": [0.5, 0.95, 0.5, 0.95], "count": 5,  "color": "orange"},
+            "edge_proc":    {"center": [0.05, 0.5, 0.95, 0.5], "count": 10, "color": "emerald"},
+            "aggregator":   {"center": [0.95, 0.95, 0.05, 0.5], "count": 10, "color": "pink"},
         }
     },
     "hpc": {
         "label": "HPC Distributed Cluster",
         "seed": 33, "dim": 4, "latency": "near-zero", "fail_prob": 0.001,
         "roles": {
-            "scheduler":    {"center": [0.9, 0.9, 0.5, 0.5], "count": 3,  "color": "cyan"},
-            "compute_node": {"center": [0.2, 0.2, 0.5, 0.5], "count": 10, "color": "purple"},
-            "storage_node": {"center": [0.5, 0.5, 0.9, 0.1], "count": 5,  "color": "orange"},
-            "interconnect": {"center": [0.5, 0.5, 0.1, 0.9], "count": 4,  "color": "emerald"},
-            "monitor":      {"center": [0.8, 0.2, 0.2, 0.8], "count": 3,  "color": "pink"},
+            "scheduler":    {"center": [0.95, 0.95, 0.5, 0.5], "count": 3,  "color": "cyan"},
+            "compute_node": {"center": [0.05, 0.05, 0.5, 0.5], "count": 10, "color": "purple"},
+            "storage_node": {"center": [0.5, 0.5, 0.95, 0.05], "count": 5,  "color": "orange"},
+            "interconnect": {"center": [0.5, 0.5, 0.05, 0.95], "count": 4,  "color": "emerald"},
+            "monitor":      {"center": [0.95, 0.05, 0.05, 0.95], "count": 3,  "color": "pink"},
         }
     }
 }
@@ -173,9 +173,13 @@ def init_system(mode="microservice"):
 
         for j in range(count):
             # Vector: center + small random perturbation
-            vec = [center[d_] + rng.uniform(-spread, spread) for d_ in range(dim)]
-            # Clamp to [0, 1]
-            vec = [max(0.0, min(1.0, v)) for v in vec]
+            # First 3 dims are MUCH more similar (spread ±0.01)
+            # 4th dim is slightly more varied (spread ±0.08)
+            vec = []
+            for d_ in range(dim):
+                spread = 0.01 if d_ < 3 else 0.08
+                v_ = center[d_] + rng.uniform(-spread, spread)
+                vec.append(max(0.0, min(1.0, v_)))
 
             node_id = f"N{node_idx:03d}"
             node = Node(node_id=node_id, vector=vec)
@@ -396,9 +400,22 @@ def run_comparison_route():
 def toggle_node(id):
     node = network.get_node(id)
     if not node: return jsonify({"error": "Not found"}), 404
-    if node.alive: node.fail()
-    else: node.recover()
-    return jsonify({"id": id, "alive": node.alive})
+    
+    # 3-State Cycle: 
+    # Normal (alive, load<12) -> Loaded (load=12) -> Dead (alive=False)
+    if node.alive:
+        if node.load < 12:
+            node.load = 12
+            state = "LOADED"
+        else:
+            node.fail()
+            state = "DEAD"
+    else:
+        node.recover()
+        node.load = 0
+        state = "ALIVE"
+        
+    return jsonify({"id": id, "alive": node.alive, "load": node.load, "state": state})
 
 @app.route("/api/node/<id>/trust", methods=["POST"])
 def set_trust(id):
