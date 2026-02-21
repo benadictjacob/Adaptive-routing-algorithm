@@ -71,7 +71,15 @@ class Network:
         vectors = []
         for i in range(n_nodes):
             vec = [random.uniform(-1.0, 1.0) for _ in range(dimensions)]
-            node = Node(node_id=f"N{i:03d}", vector=vec)
+            # Generate node with all required fields (SECTION 1)
+            node = Node(
+                node_id=f"N{i:03d}",
+                vector=vec,
+                url=f"http://node{i:03d}:{8080 + i}",  # Unique port per node
+                capacity=random.uniform(15.0, 25.0),  # Variable capacity
+                trust=1.0,  # Initial trust
+                latency=random.uniform(5.0, 50.0)  # Variable latency
+            )
             net.nodes.append(node)
             net._node_map[node.id] = node
             vectors.append(vec)

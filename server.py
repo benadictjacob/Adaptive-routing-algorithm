@@ -22,6 +22,11 @@ from avrs.node import Node
 from avrs.routing import RoutingEngine
 from avrs.simulation import Simulation, Request
 from avrs.math_utils import euclidean_distance
+from avrs.service_grouping import ServiceGrouping
+from avrs.trust_system import TrustSystem
+from avrs.observability import Observability
+from avrs.health_monitor import HealthMonitor
+from avrs.vector_embedding import get_embedder
 
 app = Flask(__name__, static_folder="dashboard", static_url_path="")
 CORS(app)
@@ -136,6 +141,10 @@ current_arch = "microservice"
 network = None
 engine_adaptive = RoutingEngine()
 sim_adaptive = None
+service_grouping = None
+trust_system = TrustSystem()
+observability = Observability()
+health_monitor = None
 
 node_positions = {} # id -> {x, y} for layouts
 node_clusters = {}  # id -> cluster index
@@ -158,10 +167,13 @@ def init_system(mode="microservice"):
     roles = arch["roles"]
 
     # --- Step 1: Generate nodes with role-based clustered vectors ---
+    global network, sim_adaptive, service_grouping, health_monitor
     network = Network()
     node_positions = {}
     node_clusters = {}
     node_roles = {}
+    
+    embedder = get_embedder()
 
     node_idx = 0
     role_idx = 0
@@ -177,12 +189,27 @@ def init_system(mode="microservice"):
             # 4th dim is slightly more varied (spread ±0.08)
             vec = []
             for d_ in range(dim):
-                spread = 0.01 if d_ < 3 else 0.08
-                v_ = center[d_] + rng.uniform(-spread, spread)
+                spread_val = 0.01 if d_ < 3 else 0.08
+                v_ = center[d_] + rng.uniform(-spread_val, spread_val)
                 vec.append(max(0.0, min(1.0, v_)))
+            
+            # Generate semantic embedding for node
+            service_desc = f"{role_name} service node {j}"
+            node_vector = embedder.embed_service_description(role_name, service_desc)
+            # Blend with geometric vector (70% semantic, 30% geometric)
+            if len(node_vector) == len(vec):
+                vec = [0.7 * node_vector[i] + 0.3 * vec[i] for i in range(len(vec))]
 
             node_id = f"N{node_idx:03d}"
-            node = Node(node_id=node_id, vector=vec, role=role_name)
+            node = Node(
+                node_id=node_id,
+                vector=vec,
+                role=role_name,
+                url=f"http://{node_id.lower()}:{8080 + node_idx}",
+                capacity=rng.uniform(15.0, 25.0),
+                trust=1.0,
+                latency=rng.uniform(5.0, 50.0)
+            )
             network.nodes.append(node)
             network._node_map[node_id] = node
 
@@ -201,8 +228,19 @@ def init_system(mode="microservice"):
     vectors = [list(n.vector) for n in network.nodes]
     network._connect_hybrid(vectors, k=4)
 
-    # --- Step 3: Set up the simulation engine ---
-    sim_adaptive = Simulation(network, engine_adaptive)
+    # --- Step 3: Set up the simulation engine with all components ---
+    service_grouping = ServiceGrouping(network)
+    sim_adaptive = Simulation(
+        network,
+        engine_adaptive,
+        service_grouping=service_grouping,
+        trust_system=trust_system,
+        observability=observability
+    )
+    
+    # --- Step 4: Start health monitor ---
+    health_monitor = HealthMonitor(network)
+    health_monitor.start()
 
 
 init_system("microservice")
@@ -226,9 +264,13 @@ def get_network():
         pos = node_positions.get(n.id, {"x": 0, "y": 0})
         nodes.append({
             "id": n.id,
+            "url": n.url,
             "vector": [round(v, 3) for v in n.vector],
             "load": n.load,
+            "capacity": n.capacity,
+            "load_ratio": round(n.get_load_ratio(), 3),
             "trust": round(n.trust, 2),
+            "latency": n.latency,
             "alive": n.alive,
             "x": pos["x"],
             "y": pos["y"],
@@ -322,7 +364,9 @@ def run_comparison_route():
             }
         })
         
-    req = Request(target_vector=target)
+    # Create request with semantic text
+    request_text = data.get("request_text", "database query")
+    req = Request.create(request_text, client_id=data.get("client_id", "web_client"))
     
     # Time Adaptive
     t0 = time.perf_counter()
@@ -483,12 +527,16 @@ def get_metrics():
             "avg_time": round(m["decision_time"] / m["total"] * 1000, 3) if m["total"] > 0 else 0
         }
     
+    # Get observability metrics
+    obs_metrics = observability.get_metrics_summary() if observability else {}
+    
     return jsonify({
         "adaptive": calc(metrics["adaptive"]),
         "trad": calc(metrics["trad"]),
         "alive_nodes": sum(1 for n in network.nodes if n.alive),
-        "total_nodes": len(network.nodes)
+        "total_nodes": len(network.nodes),
+        "observability": obs_metrics
     })
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    app.run(debug=True, port=8000)
