@@ -27,10 +27,12 @@ class Node:
         self,
         node_id: str,
         vector: Vector,
+        role: str = "default",
         trust: float = 1.0,
     ):
         self.id: str = node_id
         self.vector: Vector = vector
+        self.role: str = role
         self.neighbors: List[Node] = []
         self.load: int = 0
         self.trust: float = trust

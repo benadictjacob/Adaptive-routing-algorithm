@@ -37,9 +37,10 @@ class Node:
         alive    — whether node can receive/forward packets
     """
 
-    def __init__(self, node_id: str, vector: Vector, trust: float = 1.0):
+    def __init__(self, node_id: str, vector: Vector, role: str = "default", trust: float = 1.0):
         self.id: str = node_id
         self.vector: Vector = tuple(vector)  # immutable
+        self.role: str = role
         self.neighbors: List['Node'] = []
         self.load: float = 0.0
         self.trust: float = max(0.0, min(1.0, trust))

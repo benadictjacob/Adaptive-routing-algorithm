@@ -336,8 +336,8 @@ function onMouseUp(e) {
 
 function onWheel(e) {
     e.preventDefault();
-    const zoom = e.deltaY < 0 ? 1.1 : 0.9;
-    transform.scale = Math.max(0.2, Math.min(5, transform.scale * zoom));
+    const zoom = e.deltaY < 0 ? 1.15 : 0.85;
+    transform.scale = Math.max(0.1, Math.min(15, transform.scale * zoom));
 }
 
 function getMousePos(e) {
@@ -533,7 +533,7 @@ function toggleOverlay(name) {
 }
 
 function zoom(factor) {
-    transform.scale = Math.max(0.2, Math.min(5, transform.scale * factor));
+    transform.scale = Math.max(0.1, Math.min(15, transform.scale * factor));
 }
 
 function resetZoom() {

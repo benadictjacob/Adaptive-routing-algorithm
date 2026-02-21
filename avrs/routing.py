@@ -80,6 +80,16 @@ class RoutingEngine:
         dist_neighbor = euclidean_distance(neighbor.vector, target)
         distance_gain = dist_current - dist_neighbor
 
+        # --- Peer Offloading (Proxy Logic) ---
+        # If current node is loaded, prioritize neighbors that "do the same thing" (same role)
+        peer_bonus = 0.0
+        if neighbor.role == current.role and current.id != neighbor.id:
+            # Bonus scales with current load: the busier we are, the more we want to offload to a peer
+            if current.load > 10:
+                peer_bonus = 0.25  # Significant priority for proxies during congestion
+            else:
+                peer_bonus = 0.05  # Subtle preference for same-section routing
+
         # Normalize load to [0, 1] range for consistent scoring
         # We cap at 20 to prevent extreme penalty
         normalized_load = min(neighbor.load / 20.0, 1.0) if neighbor.load > 0 else 0.0
@@ -89,6 +99,7 @@ class RoutingEngine:
             + self.beta * distance_gain
             - self.gamma * normalized_load
             + self.delta * neighbor.trust
+            + peer_bonus  # Priority for semantic proxies
         )
 
         return score

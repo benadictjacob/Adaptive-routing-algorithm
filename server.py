@@ -182,14 +182,14 @@ def init_system(mode="microservice"):
                 vec.append(max(0.0, min(1.0, v_)))
 
             node_id = f"N{node_idx:03d}"
-            node = Node(node_id=node_id, vector=vec)
+            node = Node(node_id=node_id, vector=vec, role=role_name)
             network.nodes.append(node)
             network._node_map[node_id] = node
 
             # 2D position = projection of 4D vector (scaled for canvas)
             node_positions[node_id] = {
-                "x": (vec[0] - 0.5) * 800 + rng.uniform(-15, 15),
-                "y": (vec[1] - 0.5) * 600 + rng.uniform(-15, 15),
+                "x": (vec[0] - 0.5) * 800 + rng.uniform(-40, 40),
+                "y": (vec[1] - 0.5) * 600 + rng.uniform(-40, 40),
             }
             node_clusters[node_id] = color_idx
             node_roles[node_id] = role_name
