@@ -154,10 +154,13 @@ def init_system(mode="microservice"):
     """
     Build a semantically-clustered network for the given architecture.
 
-    Nodes of the same role get vectors VERY CLOSE together (spread ±0.08),
-    so proxy servers cluster, compute nodes cluster, etc.  Different roles
-    are separated by ≥0.5 in vector space.  Layout is a 2D projection of
-    the actual 4D vectors, so the visual display matches the vector-space reality.
+    SEMANTIC CONSTRAINT:
+    - Nodes in the SAME section (same role) have VERY CLOSE dimensional values:
+      same role center + tiny perturbation (spread ±0.015) so they cluster tightly.
+    - Nodes in DIFFERENT sections are SEPARATED: each role has a distinct center
+      (≥0.5 apart in vector space), so other services do not sit close to another
+      section's nodes in the structure.
+    Layout is a 2D projection of the 4D vectors so the graph reflects this separation.
     """
     global network, sim_adaptive, current_arch, node_positions, node_clusters, node_roles
     current_arch = mode
@@ -173,7 +176,12 @@ def init_system(mode="microservice"):
     node_clusters = {}
     node_roles = {}
     
-    embedder = get_embedder()
+    # Same-section spread: keep nodes in same role VERY close in dimensional values
+    SAME_SECTION_SPREAD = 0.015  # ±0.015 so same-role vectors stay tightly clustered
+    # Role centers in ARCHITECTURES are already separated (different sections = far apart)
+    # Layout: minimal spacing so nodes don't overlap, but very little—priority to clustering
+    CLUSTER_RADIUS = 22  # pixels from section center; small = tight cluster
+    MIN_NODE_SPACING = 18  # minimum gap between nodes in same section
 
     node_idx = 0
     role_idx = 0
@@ -181,24 +189,17 @@ def init_system(mode="microservice"):
         center = role_cfg["center"]
         count = role_cfg["count"]
         color_idx = ROLE_COLOR_INDEX.get(role_cfg["color"], role_idx)
-        spread = 0.08  # tight clustering: nodes within ±0.08 of center
+        # 2D center for this section (for layout)
+        cx = (center[0] - 0.5) * 800
+        cy = (center[1] - 0.5) * 600
 
         for j in range(count):
-            # Vector: center + small random perturbation
-            # First 3 dims are MUCH more similar (spread ±0.01)
-            # 4th dim is slightly more varied (spread ±0.08)
+            # Vector = role center + tiny perturbation only (same section = very close)
             vec = []
             for d_ in range(dim):
-                spread_val = 0.01 if d_ < 3 else 0.08
-                v_ = center[d_] + rng.uniform(-spread_val, spread_val)
+                v_ = center[d_] + rng.uniform(-SAME_SECTION_SPREAD, SAME_SECTION_SPREAD)
                 vec.append(max(0.0, min(1.0, v_)))
-            
-            # Generate semantic embedding for node
-            service_desc = f"{role_name} service node {j}"
-            node_vector = embedder.embed_service_description(role_name, service_desc)
-            # Blend with geometric vector (70% semantic, 30% geometric)
-            if len(node_vector) == len(vec):
-                vec = [0.7 * node_vector[i] + 0.3 * vec[i] for i in range(len(vec))]
+            # No blend with other embeddings: dimensional position is purely by section
 
             node_id = f"N{node_idx:03d}"
             node = Node(
@@ -213,10 +214,17 @@ def init_system(mode="microservice"):
             network.nodes.append(node)
             network._node_map[node_id] = node
 
-            # 2D position = projection of 4D vector (scaled for canvas)
+            # 2D position: tight cluster, minimal spacing so no overlap
+            # Place nodes in a small circle around section center (even spacing)
+            if count <= 1:
+                dx, dy = 0.0, 0.0
+            else:
+                angle = 2 * math.pi * j / count
+                dx = CLUSTER_RADIUS * math.cos(angle)
+                dy = CLUSTER_RADIUS * math.sin(angle)
             node_positions[node_id] = {
-                "x": (vec[0] - 0.5) * 800 + rng.uniform(-40, 40),
-                "y": (vec[1] - 0.5) * 600 + rng.uniform(-40, 40),
+                "x": cx + dx,
+                "y": cy + dy,
             }
             node_clusters[node_id] = color_idx
             node_roles[node_id] = role_name
