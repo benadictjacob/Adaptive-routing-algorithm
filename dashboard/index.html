@@ -4,216 +4,192 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AVRS — Cross-Architecture Algorithm Analysis</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap"
-        rel="stylesheet">
+    <title>Server — Self-Healing Platform</title>
     <link rel="stylesheet" href="style.css">
+    <link
+        href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@300;400;600;800&display=swap"
+        rel="stylesheet">
 </head>
 
 <body>
+    <div id="app">
+        <!-- Mobile Header -->
+        <header class="mobile-header">
+            <span class="logo-icon">🐳</span>
+            <span class="logo-text">Server DR</span>
+            <button class="menu-toggle" id="menu-toggle">☰</button>
+        </header>
 
-    <!-- ═══════════ HEADER ═══════════ -->
-    <header class="header">
-        <div class="header-left">
-            <div class="logo-wrap">
-                <svg width="32" height="32" viewBox="0 0 36 36">
-                    <circle cx="18" cy="18" r="16" stroke="url(#g)" stroke-width="2" fill="none" opacity=".4" />
-                    <circle cx="18" cy="18" r="4" fill="url(#g)" />
-                    <defs>
-                        <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-                            <stop offset="0%" stop-color="#6366f1" />
-                            <stop offset="100%" stop-color="#06b6d4" />
-                        </linearGradient>
-                    </defs>
-                </svg>
+        <!-- Sidebar -->
+        <nav class="sidebar" id="sidebar">
+            <div class="logo">
+                <span class="logo-icon">🐳</span>
+                <span class="logo-text">Server DR</span>
             </div>
-            <div>
-                <h1>Adaptive Routing Analysis</h1>
-                <span class="subtitle" id="archTitle">Microservice Architecture</span>
+            <div class="nav-items">
+                <div class="nav-item active" data-tab="topology" onclick="switchTab('topology')">📊 Topology</div>
+                <div class="nav-item" data-tab="timeline" onclick="switchTab('timeline')">📋 Timeline</div>
+                <div class="nav-item" data-tab="logs" onclick="switchTab('logs')">📂 Logs</div>
+                <div class="nav-item" data-tab="deploy" onclick="switchTab('deploy')">🚀 Deploy</div>
             </div>
-        </div>
-
-        <div class="header-center">
-            <div class="arch-selector">
-                <button class="arch-btn active" onclick="switchMode('microservice')">Microservice</button>
-                <button class="arch-btn" onclick="switchMode('edge')">Edge</button>
-                <button class="arch-btn" onclick="switchMode('cloud')">Cloud</button>
-                <button class="arch-btn" onclick="switchMode('iot')">IoT Mesh</button>
-                <button class="arch-btn" onclick="switchMode('hpc')">HPC</button>
+            <div class="status-indicator">
+                <div class="status-dot online" id="status-dot"></div>
+                <span id="cluster-status">Monitoring...</span>
             </div>
-        </div>
+        </nav>
 
-        <div class="header-right">
-            <button class="btn btn-ghost" onclick="resetSystem()">↻ Reset</button>
-            <div id="statusDot" class="status-dot"></div>
-        </div>
-    </header>
-
-    <!-- ═══════════ MAIN ═══════════ -->
-    <main class="main-grid">
-
-        <!-- ─── LEFT: Controls & Analysis ─── -->
-        <aside class="sidebar sidebar-left" id="sidebarLeft">
-            <div class="resize-handle rh-left" id="resizeHandleLeft"></div>
-
-            <!-- Analysis Filters -->
-            <div class="panel-section">
-                <div class="section-title">Visual Analysis Overlays</div>
-                <div class="overlay-controls">
-                    <label class="overlay-item"><input type="checkbox" id="showLatency"
-                            onchange="toggleOverlay('latency')"> Latency Field</label>
-                    <label class="overlay-item"><input type="checkbox" id="showFailures"
-                            onchange="toggleOverlay('failures')"> Failure Zones</label>
-                    <label class="overlay-item"><input type="checkbox" id="showCongestion"
-                            onchange="toggleOverlay('congestion')"> Congestion</label>
-                    <label class="overlay-item"><input type="checkbox" id="showClusters"
-                            onchange="toggleOverlay('clusters')"> Node Clusters</label>
+        <main class="content">
+            <!-- Metrics Bar -->
+            <div class="metrics-bar">
+                <div class="metric-pill">
+                    <span class="metric-label">Services</span>
+                    <span class="metric-value" id="m-services">0</span>
+                </div>
+                <div class="metric-pill">
+                    <span class="metric-label">Containers</span>
+                    <span class="metric-value" id="m-containers">0</span>
+                </div>
+                <div class="metric-pill healthy">
+                    <span class="metric-label">Health</span>
+                    <span class="metric-value" id="m-health">100%</span>
+                </div>
+                <div class="metric-pill">
+                    <span class="metric-label">Recovered</span>
+                    <span class="metric-value" id="m-recovered">0</span>
+                </div>
+                <div class="metric-pill danger" id="m-fail-pill">
+                    <span class="metric-label">Failures</span>
+                    <span class="metric-value" id="m-failures">0</span>
                 </div>
             </div>
 
-            <!-- Route Control -->
-            <div class="panel-section">
-                <div class="section-title">Request Configuration</div>
-                <div class="form-group">
-                    <label>Source Node</label>
-                    <select id="startNode" class="input"></select>
-                </div>
-                <div class="form-group">
-                    <label>Target 4D Vector</label>
-                    <div class="vec-grid">
-                        <input type="number" id="v0" class="input" value="0.8" step="0.1">
-                        <input type="number" id="v1" class="input" value="0.8" step="0.1">
-                        <input type="number" id="v2" class="input" value="0.8" step="0.1">
-                        <input type="number" id="v3" class="input" value="0.8" step="0.1">
-                    </div>
-                </div>
-                <button class="btn btn-primary btn-full" onclick="runAnalysis()">Analyze Route</button>
-            </div>
+            <!-- TAB: Topology -->
+            <div class="tab-content active" id="tab-topology">
+                <div class="grid-main">
+                    <!-- Topology Canvas -->
+                    <section class="card topology-card">
+                        <div class="card-header">
+                            <h2>Live Container Topology</h2>
+                            <div class="legend">
+                                <span class="legend-item"><i class="dot green"></i>Healthy</span>
+                                <span class="legend-item"><i class="dot red"></i>Failed</span>
+                                <span class="legend-item"><i class="dot yellow"></i>Restarting</span>
+                                <span class="legend-item"><i class="dot blue"></i>Deploying</span>
+                            </div>
+                        </div>
+                        <div id="topology-canvas"></div>
+                    </section>
 
-            <!-- Simulation Tools -->
-            <div class="panel-section">
-                <div class="section-title">Failure Simulation</div>
-                <div class="tool-grid">
-                    <button class="btn btn-ghost btn-sm" onclick="simFailure('node')">Node Crash</button>
-                    <button class="btn btn-ghost btn-sm" onclick="simFailure('cluster')">Cluster Outage</button>
-                    <button class="btn btn-ghost btn-sm" onclick="simFailure('partition')">Partition</button>
-                </div>
-                <div class="hint-text">Click nodes to toggle alive/dead. Same-role nodes failover within their section.
-                </div>
-            </div>
+                    <!-- Side Panels -->
+                    <div class="side-panels">
+                        <!-- Simulation -->
+                        <section class="card">
+                            <div class="card-header">
+                                <h2>⚡ Disaster Simulation</h2>
+                            </div>
+                            <div class="card-body sim-grid">
+                                <button class="btn" onclick="simKill('healstack_api-gateway')">💀 Kill Gateway</button>
+                                <button class="btn" onclick="simKill('healstack_auth-service')">💀 Kill Auth</button>
+                                <button class="btn" onclick="simKill('healstack_data-service')">💀 Kill Data</button>
+                                <button class="btn warn" onclick="simCrash(9001)">💥 Crash Gateway</button>
+                                <button class="btn danger" onclick="simToggle(9001)">🔀 Toggle Health</button>
+                                <button class="btn danger" onclick="simDisaster()">🌪️ Disaster Test</button>
+                            </div>
+                        </section>
 
-            <!-- Semantic Roles Legend -->
-            <div class="panel-section">
-                <div class="section-title">Semantic Roles</div>
-                <div id="roleLegend" class="role-legend">
-                    <!-- Populated dynamically by updateUI() -->
-                </div>
-            </div>
+                        <!-- AI Analysis -->
+                        <section class="card ai-card">
+                            <div class="card-header">
+                                <h2>🤖 AI Analysis</h2>
+                                <span class="pill" id="ai-count">0</span>
+                            </div>
+                            <div class="card-body scroll" id="ai-panel">
+                                <div class="empty-state">Waiting for failures to analyze...</div>
+                            </div>
+                        </section>
 
-            <!-- Algorithm Comparison -->
-            <div class="panel-section">
-                <div class="section-title">Performance Comparison</div>
-                <div class="comp-table">
-                    <div class="comp-header">Metric</div>
-                    <div class="comp-header">Adaptive</div>
-                    <div class="comp-header">Traditional</div>
-
-                    <div>Success</div>
-                    <div id="m-ad-rate" class="accent-cyan">0%</div>
-                    <div id="m-tr-rate">0%</div>
-
-                    <div>Avg Hops</div>
-                    <div id="m-ad-hops" class="accent-cyan">0</div>
-                    <div id="m-tr-hops">0</div>
-
-                    <div>Latency (ms)</div>
-                    <div id="m-ad-time" class="accent-cyan">0</div>
-                    <div id="m-tr-time">0</div>
-                </div>
-            </div>
-        </aside>
-
-        <!-- ─── CENTER: Graph ─── -->
-        <section class="viewport">
-            <div id="graphContainer" class="graph-container">
-                <canvas id="networkCanvas"></canvas>
-
-                <!-- Controls overlay -->
-                <div class="viewport-controls">
-                    <button class="btn-icon" onclick="zoom(1.5)">+</button>
-                    <button class="btn-icon" onclick="zoom(0.6)">-</button>
-                    <button class="btn-icon" onclick="resetZoom()">⟲</button>
-                </div>
-                <!-- Legend -->
-                <div class="graph-legend">
-                    <div class="leg-item"><span class="leg-dot bg-green"></span> Optimal</div>
-                    <div class="leg-item"><span class="leg-dot bg-amber"></span> Loaded</div>
-                    <div class="leg-item"><span class="leg-dot bg-rose"></span> Failure</div>
-                </div>
-            </div>
-
-            <!-- Timeline Controller -->
-            <div class="timeline-wrap">
-                <div class="tl-controls">
-                    <button onclick="tlStep(-1)">⏮</button>
-                    <button onclick="tlPlay()">▶</button>
-                    <button onclick="tlStep(1)">⏭</button>
-                </div>
-                <input type="range" id="tlSlider" min="0" max="100" value="0">
-                <div class="tl-status">FRAME: <span id="frameIdx">0</span> / <span id="frameCount">0</span></div>
-            </div>
-        </section>
-
-        <!-- ─── RIGHT: Intelligence & Log ─── -->
-        <aside class="sidebar sidebar-right" id="sidebarRight">
-            <div class="resize-handle rh-right" id="resizeHandleRight"></div>
-
-            <!-- Node Inspector (fixed panel, updates on hover) -->
-            <div class="panel-section node-inspector">
-                <div class="section-title">Node Inspector</div>
-                <div id="nodeInspector" class="inspector-body">
-                    <div class="empty-state">Hover over a node to inspect.</div>
-                </div>
-            </div>
-
-            <!-- Decision Intelligence -->
-            <div class="panel-section decision-panel">
-                <div class="section-title">Decision Intelligence</div>
-                <div id="decisionBody" class="panel-scroll">
-                    <div class="empty-state">Run analysis to see routing reasoning.</div>
-                </div>
-            </div>
-
-            <!-- Architecture Impact -->
-            <div class="panel-section impact-panel">
-                <div class="section-title">Architecture Impact Analysis</div>
-                <div id="impactBody" class="impact-stats">
-                    <div class="stat-item">
-                        <span class="stat-label">Connectivity Density</span>
-                        <span id="stat-density" class="stat-val">-</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">Failure Probability</span>
-                        <span id="stat-fail" class="stat-val">-</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">Topology Model</span>
-                        <span id="stat-topo" class="stat-val">-</span>
+                        <!-- Event Stream -->
+                        <section class="card">
+                            <div class="card-header">
+                                <h2>📡 Events</h2>
+                                <span class="pill" id="event-count">0</span>
+                            </div>
+                            <div class="card-body scroll mono" id="event-log"></div>
+                        </section>
                     </div>
                 </div>
             </div>
 
-            <!-- Event Log -->
-            <div class="panel-section log-panel">
-                <div class="section-title">Protocol Logs</div>
-                <div id="eventLog" class="log-scroll"></div>
+            <!-- TAB: Timeline -->
+            <div class="tab-content" id="tab-timeline">
+                <section class="card full-card">
+                    <div class="card-header">
+                        <h2>📋 Event Timeline — Self-Healing Lifecycle</h2>
+                    </div>
+                    <div class="card-body scroll" id="timeline-panel">
+                        <div class="empty-state">No events yet. Trigger a failure to see the full lifecycle.</div>
+                    </div>
+                </section>
             </div>
 
-        </aside>
+            <!-- TAB: Logs -->
+            <div class="tab-content" id="tab-logs">
+                <section class="card full-card">
+                    <div class="card-header">
+                        <h2>📂 Logs Explorer — Live Docker Logs</h2>
+                        <div class="log-controls">
+                            <select id="log-target" onchange="loadLogs()">
+                                <option value="healstack_api-gateway">api-gateway</option>
+                                <option value="healstack_auth-service">auth-service</option>
+                                <option value="healstack_data-service">data-service</option>
+                            </select>
+                            <button class="btn" onclick="loadLogs()">🔄 Refresh Logs</button>
+                        </div>
+                    </div>
+                    <div class="card-body log-terminal scroll mono" id="log-viewer">
+                        <div class="empty-state">Select a service to view logs...</div>
+                    </div>
+                </section>
+            </div>
 
-    </main>
+            <!-- TAB: Deploy -->
+            <div class="tab-content" id="tab-deploy">
+                <section class="card full-card">
+                    <div class="card-header">
+                        <h2>🚀 Blue-Green Deployment Engine</h2>
+                    </div>
+                    <div class="card-body">
+                        <div class="deploy-form">
+                            <div class="form-row">
+                                <label>Service</label>
+                                <select id="deploy-service">
+                                    <option value="healstack_api-gateway">api-gateway</option>
+                                    <option value="healstack_auth-service">auth-service</option>
+                                    <option value="healstack_data-service">data-service</option>
+                                </select>
+                            </div>
+                            <div class="form-row">
+                                <label>New Image</label>
+                                <input type="text" id="deploy-image" placeholder="e.g. healstack-api-gateway:v2">
+                            </div>
+                            <button class="btn deploy-btn" onclick="startDeploy()">🚀 Deploy (Blue-Green)</button>
+                        </div>
+                        <div class="deploy-info">
+                            <h3>How it works</h3>
+                            <div class="deploy-steps">
+                                <div class="step"><span class="step-num">1</span> Deploy green alongside blue</div>
+                                <div class="step"><span class="step-num">2</span> Wait 5 seconds for startup</div>
+                                <div class="step"><span class="step-num">3</span> Run 3 health checks</div>
+                                <div class="step"><span class="step-num">4</span> If 2/3 pass → route to green</div>
+                                <div class="step"><span class="step-num">5</span> If fail → rollback to blue</div>
+                            </div>
+                        </div>
+                        <div id="deploy-status"></div>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
 
     <script src="app.js"></script>
 </body>

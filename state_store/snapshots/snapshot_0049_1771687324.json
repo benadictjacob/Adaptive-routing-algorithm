@@ -1,0 +1,182 @@
+{
+  "cluster_name": "k8s-production",
+  "timestamp": 1771687324.5453975,
+  "nodes": [
+    {
+      "name": "node-00",
+      "cpu_cores": 4,
+      "memory_gb": 8.0,
+      "max_pods": 30
+    },
+    {
+      "name": "node-01",
+      "cpu_cores": 4,
+      "memory_gb": 8.0,
+      "max_pods": 30
+    },
+    {
+      "name": "node-02",
+      "cpu_cores": 8,
+      "memory_gb": 16.0,
+      "max_pods": 50
+    },
+    {
+      "name": "node-03",
+      "cpu_cores": 4,
+      "memory_gb": 8.0,
+      "max_pods": 30
+    },
+    {
+      "name": "node-04",
+      "cpu_cores": 8,
+      "memory_gb": 16.0,
+      "max_pods": 50
+    },
+    {
+      "name": "node-05",
+      "cpu_cores": 4,
+      "memory_gb": 8.0,
+      "max_pods": 30
+    }
+  ],
+  "deployments": [
+    {
+      "name": "api-gateway",
+      "image": "api-gateway:2.1",
+      "replicas": 3,
+      "labels": {
+        "app": "api-gateway",
+        "tier": "frontend"
+      }
+    },
+    {
+      "name": "auth-service",
+      "image": "auth-service:1.4",
+      "replicas": 2,
+      "labels": {
+        "app": "auth-service",
+        "tier": "backend"
+      }
+    },
+    {
+      "name": "user-service",
+      "image": "user-service:3.0",
+      "replicas": 3,
+      "labels": {
+        "app": "user-service",
+        "tier": "backend"
+      }
+    },
+    {
+      "name": "order-service",
+      "image": "order-service:2.7",
+      "replicas": 3,
+      "labels": {
+        "app": "order-service",
+        "tier": "backend"
+      }
+    },
+    {
+      "name": "payment-service",
+      "image": "payment-service:1.2",
+      "replicas": 2,
+      "labels": {
+        "app": "payment-service",
+        "tier": "backend"
+      }
+    },
+    {
+      "name": "database",
+      "image": "postgres:15",
+      "replicas": 2,
+      "labels": {
+        "app": "database",
+        "tier": "data"
+      }
+    },
+    {
+      "name": "cache",
+      "image": "redis:7",
+      "replicas": 3,
+      "labels": {
+        "app": "cache",
+        "tier": "data"
+      }
+    },
+    {
+      "name": "message-queue",
+      "image": "rabbitmq:3.12",
+      "replicas": 2,
+      "labels": {
+        "app": "message-queue",
+        "tier": "infra"
+      }
+    }
+  ],
+  "services": [
+    {
+      "name": "api-gateway-svc",
+      "selector": {
+        "app": "api-gateway"
+      },
+      "port": 443,
+      "type": "LoadBalancer"
+    },
+    {
+      "name": "auth-svc",
+      "selector": {
+        "app": "auth-service"
+      },
+      "port": 8080,
+      "type": "ClusterIP"
+    },
+    {
+      "name": "user-svc",
+      "selector": {
+        "app": "user-service"
+      },
+      "port": 8080,
+      "type": "ClusterIP"
+    },
+    {
+      "name": "order-svc",
+      "selector": {
+        "app": "order-service"
+      },
+      "port": 8080,
+      "type": "ClusterIP"
+    },
+    {
+      "name": "payment-svc",
+      "selector": {
+        "app": "payment-service"
+      },
+      "port": 8080,
+      "type": "ClusterIP"
+    },
+    {
+      "name": "database-svc",
+      "selector": {
+        "app": "database"
+      },
+      "port": 5432,
+      "type": "ClusterIP"
+    },
+    {
+      "name": "cache-svc",
+      "selector": {
+        "app": "cache"
+      },
+      "port": 6379,
+      "type": "ClusterIP"
+    },
+    {
+      "name": "mq-svc",
+      "selector": {
+        "app": "message-queue"
+      },
+      "port": 5672,
+      "type": "ClusterIP"
+    }
+  ]
+}

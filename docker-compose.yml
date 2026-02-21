@@ -1,0 +1,55 @@
+version: "3.8"
+
+services:
+  api-gateway:
+    build: ./services/api_gateway
+    image: heal-api-gateway:latest
+    deploy:
+      replicas: 2
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 5
+    ports:
+      - "9001:5000"
+    networks:
+      - heal-net
+    environment:
+      - SERVICE_NAME=api-gateway
+
+  auth-service:
+    build: ./services/auth_service
+    image: heal-auth-service:latest
+    deploy:
+      replicas: 2
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 5
+    ports:
+      - "9002:5000"
+    networks:
+      - heal-net
+    environment:
+      - SERVICE_NAME=auth-service
+
+  data-service:
+    build: ./services/data_service
+    image: heal-data-service:latest
+    deploy:
+      replicas: 2
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 5
+    ports:
+      - "9003:5000"
+    networks:
+      - heal-net
+    environment:
+      - SERVICE_NAME=data-service
+
+networks:
+  heal-net:
+    driver: overlay
+    attachable: true

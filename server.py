@@ -1,537 +1,378 @@
 """
 ═══════════════════════════════════════════════════════════════════════
-  KUBERNETES SELF-HEALING DISASTER-RECOVERY PLATFORM
-  Central REST API Server (Section 12, 13)
+  ORCHESTRATOR SERVER — Central API for Self-Healing Platform
 ═══════════════════════════════════════════════════════════════════════
 
-Ties together all layers:
-  • Cluster Model        → controller/cluster.py
-  • Failure Detection    → controller/failure_detector.py
-  • Health Monitoring    → monitor/health_checker.py
-  • Automated Recovery   → recovery/recovery_engine.py
-  • Proxy / Rerouting    → proxy/proxy_server.py
-  • State Snapshots      → state_store/snapshot_engine.py
-  • Disaster Restoration → recovery/disaster_restore.py
-
-Dashboard served from /dashboard (built separately).
-Real-time events via SSE at /api/events/stream.
+Integrates: Monitor, Logs, AI Engine, Recovery, Deployment
+Serves: Dashboard, REST API, SSE Events, Timeline
 """
 
-import sys
-import os
-import json
 import time
-import random
+import json
 import threading
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
+import docker
 from flask import Flask, jsonify, request, send_from_directory, Response
 from flask_cors import CORS
 
-from controller.cluster import (
-    Cluster, KubeNode, Pod, Deployment, Service,
-    NodeStatus, PodStatus, ServiceType,
-)
-from controller.failure_detector import FailureDetector
-from monitor.health_checker import HealthChecker
-from recovery.recovery_engine import RecoveryEngine
-from proxy.proxy_server import ProxyServer, ProxyRequest
-from state_store.snapshot_engine import SnapshotEngine
-from recovery.disaster_restore import DisasterRestore
+from monitor.monitor import HealthMonitor, FailureEvent
+from logs.collector import LogCollector
+from ai_engine.analyzer import AIAnalyzer
+from recovery.recovery import RecoveryEngine
+from deployment.deployer import BlueGreenDeployer
 
+# ═══════════════════════════════════════════════════════════
+#  APP INIT
+# ═══════════════════════════════════════════════════════════
 
 app = Flask(__name__, static_folder="dashboard", static_url_path="")
 CORS(app)
 
-# ═══════════════════════════════════════════════════════════════════
-#  GLOBAL STATE
-# ═══════════════════════════════════════════════════════════════════
+monitor = None
+log_collector = None
+ai_analyzer = None
+recovery_engine = None
+deployer = None
+docker_client = None
 
-cluster: Cluster = None
-failure_detector: FailureDetector = None
-health_checker: HealthChecker = None
-recovery_engine: RecoveryEngine = None
-proxy_server: ProxyServer = None
-snapshot_engine: SnapshotEngine = None
-disaster_restore: DisasterRestore = None
+# Event + Timeline stores
+event_stream = []
+timeline_entries = []
+MAX_EVENTS = 200
 
-# SSE event queue for real-time dashboard updates
-sse_events = []
-sse_lock = threading.Lock()
-
-
-def push_sse_event(event_type: str, data: dict):
-    """Push an event to the SSE stream for the dashboard."""
-    with sse_lock:
-        sse_events.append({
-            "type": event_type,
-            "data": data,
-            "timestamp": time.time(),
-        })
-        # Keep last 200 events
-        if len(sse_events) > 200:
-            del sse_events[:100]
+SERVICE_PORTS = {
+    "healstack_api-gateway": 9001,
+    "healstack_auth-service": 9002,
+    "healstack_data-service": 9003,
+}
 
 
-# ═══════════════════════════════════════════════════════════════════
-#  SYSTEM INITIALIZATION
-# ═══════════════════════════════════════════════════════════════════
+def push_event(event_type, data):
+    entry = {"type": event_type, "data": data, "timestamp": time.time()}
+    event_stream.append(entry)
+    if len(event_stream) > MAX_EVENTS:
+        event_stream.pop(0)
 
-def init_system(config_path: str = None):
-    """Initialize the entire DR platform from a config file."""
-    global cluster, failure_detector, health_checker, recovery_engine
-    global proxy_server, snapshot_engine, disaster_restore
 
-    # Load config
-    if config_path is None:
-        config_path = os.path.join(
-            os.path.dirname(__file__), "config", "default_cluster.json"
-        )
-    with open(config_path) as f:
-        config = json.load(f)
+def push_timeline(phase, service, message, details=None):
+    entry = {
+        "phase": phase,
+        "service": service,
+        "message": message,
+        "details": details or {},
+        "timestamp": time.time(),
+    }
+    timeline_entries.append(entry)
+    if len(timeline_entries) > MAX_EVENTS:
+        timeline_entries.pop(0)
+    push_event("timeline", entry)
 
-    # ── Step 1: Create cluster ───────────────────────────────────
-    cluster = Cluster(name=config.get("cluster_name", "k8s-cluster"))
-    push_sse_event("system", {"message": "Initializing cluster..."})
 
-    # ── Step 2: Create nodes ─────────────────────────────────────
-    for node_cfg in config.get("nodes", []):
-        node = KubeNode(
-            name=node_cfg["name"],
-            cpu_cores=node_cfg.get("cpu_cores", 4),
-            memory_gb=node_cfg.get("memory_gb", 8.0),
-            max_pods=node_cfg.get("max_pods", 30),
-        )
-        cluster.add_node(node)
+# ═══════════════════════════════════════════════════════════
+#  SELF-HEALING PIPELINE CALLBACK
+# ═══════════════════════════════════════════════════════════
 
-    # ── Step 3: Create deployments and schedule pods ─────────────
-    for dep_cfg in config.get("deployments", []):
-        dep = Deployment(
-            name=dep_cfg["name"],
-            image=dep_cfg.get("image", "app:latest"),
-            replicas=dep_cfg.get("replicas", 3),
-            labels=dep_cfg.get("labels", {}),
-        )
-        cluster.create_deployment(dep)
+def on_failure_detected(event: FailureEvent):
+    """
+    Complete self-healing pipeline:
+    1. Failure detected → 2. Logs fetched → 3. AI analysis → 4. Recovery → 5. Restored
+    """
+    # Phase 1: Detection
+    push_timeline("detection", event.service_name,
+                  f"🚨 {event.event_type}: {event.message}")
+    push_event("failure", event.to_dict())
+    print(f"\n🚨 FAILURE: [{event.event_type}] {event.service_name}: {event.message}")
 
-    # ── Step 4: Create services ──────────────────────────────────
-    for svc_cfg in config.get("services", []):
-        svc_type = ServiceType.CLUSTER_IP
-        if svc_cfg.get("type") == "LoadBalancer":
-            svc_type = ServiceType.LOAD_BALANCER
-        elif svc_cfg.get("type") == "NodePort":
-            svc_type = ServiceType.NODE_PORT
+    # Phase 2: Log collection
+    logs = ""
+    try:
+        logs = log_collector.collect_from_service(event.service_name)
+        if not logs:
+            logs = log_collector.collect_from_container(event.container_name)
+        event.logs = logs
+        push_timeline("logs_captured", event.service_name,
+                      f"📋 Captured {len(logs)} chars of logs")
+        print(f"📋 LOGS: Captured {len(logs)} chars from {event.container_name}")
+    except Exception as e:
+        push_timeline("logs_captured", event.service_name,
+                      f"⚠️ Log capture failed: {str(e)[:60]}")
 
-        svc = Service(
-            name=svc_cfg["name"],
-            selector=svc_cfg.get("selector", {}),
-            port=svc_cfg.get("port", 80),
-            service_type=svc_type,
-        )
-        cluster.create_service(svc)
-
-    # ── Step 5: Wire up all subsystems ───────────────────────────
-    failure_detector = FailureDetector(cluster, check_interval=3.0)
-    health_checker = HealthChecker(cluster, interval=2.0)
-    recovery_engine = RecoveryEngine(cluster)
-    proxy_server = ProxyServer(cluster)
-    snapshot_engine = SnapshotEngine(cluster, interval=30.0)
-    disaster_restore = DisasterRestore(snapshot_engine)
-
-    # Connect failure detector → recovery engine (auto-heal pipeline)
-    def on_failure_detected(event):
-        recovery_engine.handle_failure(event)
-        push_sse_event("failure", event.to_dict())
-
-    failure_detector.on_failure(on_failure_detected)
-
-    # ── Step 6: Start background threads ─────────────────────────
-    health_checker.start()
-    failure_detector.start()
-    snapshot_engine.start()
-
-    # Take initial snapshot
-    snapshot_engine.take_snapshot()
-
-    push_sse_event("system", {
-        "message": f"Cluster '{cluster.name}' initialized: "
-                   f"{len(cluster.nodes)} nodes, {len(cluster.deployments)} deployments, "
-                   f"{len(cluster.services)} services, {len(cluster.all_pods())} pods"
+    # Phase 3: AI analysis
+    context = {"exit_code": event.details.get("exit_code")}
+    analysis = ai_analyzer.analyze(logs, context)
+    event.ai_analysis = analysis
+    push_timeline("analysis", event.service_name,
+                  f"🤖 {analysis['error_type']}: {analysis['human_explanation'][:100]}")
+    push_event("ai_analysis", {
+        "service": event.service_name,
+        "analysis": analysis,
     })
+    print(f"🤖 AI: {analysis['error_type']} — {analysis['human_explanation'][:80]}")
 
-    print(f"\n{'='*60}")
-    print(f"  KUBERNETES DR PLATFORM — {cluster.name}")
-    print(f"  Nodes: {len(cluster.nodes)}  |  Deployments: {len(cluster.deployments)}")
-    print(f"  Services: {len(cluster.services)}  |  Pods: {len(cluster.all_pods())}")
-    print(f"{'='*60}\n")
+    # Phase 4: Recovery
+    recovery_engine.handle_failure(event)
+    push_timeline("recovery", event.service_name,
+                  f"🔧 Recovery action executed for {event.service_name}")
+    push_event("recovery", {
+        "service": event.service_name,
+        "message": f"Auto-recovered {event.service_name}",
+    })
+    print(f"♻️ RECOVERED: {event.service_name}")
+
+    # Phase 5: Mark restored
+    push_timeline("restored", event.service_name,
+                  f"✅ {event.service_name} recovery complete")
 
 
-# Initialize on module load
-init_system()
-
-
-# ═══════════════════════════════════════════════════════════════════
-#  DASHBOARD
-# ═══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════
+#  ROUTES — Dashboard
+# ═══════════════════════════════════════════════════════════
 
 @app.route("/")
-def serve_dashboard():
+def dashboard():
     return send_from_directory("dashboard", "index.html")
 
 
-# ═══════════════════════════════════════════════════════════════════
-#  SSE — Real-time event stream
-# ═══════════════════════════════════════════════════════════════════
-
-@app.route("/api/events/stream")
-def event_stream():
-    """Server-Sent Events stream for real-time dashboard updates."""
-    def generate():
-        last_idx = len(sse_events)
-        while True:
-            with sse_lock:
-                new_events = sse_events[last_idx:]
-                last_idx = len(sse_events)
-            for ev in new_events:
-                yield f"data: {json.dumps(ev)}\n\n"
-            time.sleep(1)
-
-    return Response(generate(), mimetype="text/event-stream")
-
-
-# ═══════════════════════════════════════════════════════════════════
-#  CLUSTER STATE ENDPOINTS
-# ═══════════════════════════════════════════════════════════════════
-
-@app.route("/api/cluster")
-def get_cluster():
-    """Get full cluster state."""
-    return jsonify(cluster.to_dict())
-
-
-@app.route("/api/nodes")
-def get_nodes():
-    """Get all node details."""
-    return jsonify({"nodes": [n.to_dict() for n in cluster.nodes]})
-
-
-@app.route("/api/pods")
-def get_pods():
-    """Get all pod details."""
-    return jsonify({"pods": [p.to_dict() for p in cluster.all_pods()]})
-
-
-@app.route("/api/deployments")
-def get_deployments():
-    return jsonify({"deployments": [d.to_dict() for d in cluster.deployments]})
-
+# ═══════════════════════════════════════════════════════════
+#  ROUTES — Services & Containers
+# ═══════════════════════════════════════════════════════════
 
 @app.route("/api/services")
-def get_services():
-    all_p = cluster.all_pods()
-    return jsonify({"services": [s.to_dict(all_p) for s in cluster.services]})
+def api_services():
+    try:
+        services = docker_client.services.list(
+            filters={"label": "com.docker.stack.namespace=healstack"}
+        )
+        result = []
+        for svc in services:
+            tasks = svc.tasks()
+            running = sum(1 for t in tasks if t["Status"]["State"] == "running")
+            desired = svc.attrs["Spec"]["Mode"].get("Replicated", {}).get("Replicas", 0)
+            result.append({
+                "name": svc.name,
+                "id": svc.short_id,
+                "image": svc.attrs["Spec"]["TaskTemplate"]["ContainerSpec"]["Image"].split("@")[0],
+                "replicas_running": running,
+                "replicas_desired": desired,
+                "ports": svc.attrs["Endpoint"].get("Ports", []),
+            })
+        return jsonify({"services": result})
+    except Exception as e:
+        return jsonify({"services": [], "error": str(e)[:100]})
 
 
-@app.route("/api/events")
-def get_events():
-    count = request.args.get("count", 50, type=int)
-    return jsonify({"events": cluster.get_recent_events(count)})
+@app.route("/api/containers")
+def api_containers():
+    try:
+        states = monitor.get_all_states()
+        return jsonify({"containers": states})
+    except Exception:
+        return jsonify({"containers": []})
 
 
-# ═══════════════════════════════════════════════════════════════════
-#  DISASTER SIMULATION ENDPOINTS (Section 11)
-# ═══════════════════════════════════════════════════════════════════
-
-@app.route("/api/simulate/kill-pod", methods=["POST"])
-def kill_pod():
-    """Kill a specific pod or a random one."""
-    data = request.json or {}
-    pod_name = data.get("pod")
-
-    if pod_name:
-        target = None
-        for p in cluster.all_pods():
-            if p.name == pod_name:
-                target = p
-                break
-        if not target:
-            return jsonify({"error": f"Pod '{pod_name}' not found"}), 404
-    else:
-        running_pods = [p for p in cluster.all_pods() if p.status == PodStatus.RUNNING]
-        if not running_pods:
-            return jsonify({"error": "No running pods to kill"}), 400
-        target = random.choice(running_pods)
-
-    target.crash()
-    push_sse_event("simulation", {"action": "kill-pod", "pod": target.name, "node": target.node_name})
-    cluster._log_event("Simulation", f"Pod '{target.name}' killed (simulated crash)", "Warning")
-
-    return jsonify({
-        "action": "kill-pod",
-        "pod": target.name,
-        "node": target.node_name,
-        "status": target.status.value,
-    })
+@app.route("/api/logs/<target>")
+def api_logs(target):
+    """Fetch logs for a service or a specific container."""
+    tail = request.args.get("tail", 100, type=int)
+    # Try service logs first
+    logs = log_collector.fetch_service_logs(target, tail=tail)
+    if "[ERROR]" in logs:
+        # Fallback to container logs
+        logs = log_collector.fetch_logs(target, tail=tail)
+    return jsonify({"target": target, "logs": logs})
 
 
-@app.route("/api/simulate/kill-node", methods=["POST"])
-def kill_node():
-    """Kill a specific node or a random one."""
-    data = request.json or {}
-    node_name = data.get("node")
-
-    if node_name:
-        target = cluster.get_node(node_name)
-        if not target:
-            return jsonify({"error": f"Node '{node_name}' not found"}), 404
-    else:
-        ready = cluster.get_ready_nodes()
-        if not ready:
-            return jsonify({"error": "No ready nodes to kill"}), 400
-        target = random.choice(ready)
-
-    affected_pods = [p.name for p in target.pods]
-    target.mark_not_ready()
-    push_sse_event("simulation", {
-        "action": "kill-node", "node": target.name,
-        "affected_pods": affected_pods,
-    })
-    cluster._log_event("Simulation", f"Node '{target.name}' killed — {len(affected_pods)} pods affected", "Critical")
-
-    return jsonify({
-        "action": "kill-node",
-        "node": target.name,
-        "affected_pods": affected_pods,
-        "status": target.status.value,
-    })
-
-
-@app.route("/api/simulate/network-delay", methods=["POST"])
-def network_delay():
-    """Inject network latency into random pods."""
-    data = request.json or {}
-    delay_ms = data.get("delay_ms", 500.0)
-    count = data.get("count", 5)
-
-    running = [p for p in cluster.all_pods() if p.status == PodStatus.RUNNING]
-    targets = random.sample(running, min(count, len(running)))
-
-    affected = []
-    for pod in targets:
-        pod.latency_ms = delay_ms + random.uniform(0, 100)
-        affected.append({"pod": pod.name, "latency_ms": round(pod.latency_ms, 1)})
-
-    push_sse_event("simulation", {"action": "network-delay", "affected": affected})
-    cluster._log_event("Simulation", f"Network delay injected into {len(affected)} pods", "Warning")
-
-    return jsonify({"action": "network-delay", "affected": affected})
-
-
-@app.route("/api/simulate/cluster-crash", methods=["POST"])
-def cluster_crash():
-    """Simulate a full cluster crash — all nodes go NotReady."""
-    affected = []
-    for node in cluster.nodes:
-        node.mark_not_ready()
-        affected.append(node.name)
-
-    push_sse_event("simulation", {"action": "cluster-crash", "nodes_affected": affected})
-    cluster._log_event("Simulation", "FULL CLUSTER CRASH — all nodes down", "Critical")
-
-    return jsonify({
-        "action": "cluster-crash",
-        "nodes_affected": affected,
-        "message": "All nodes marked NotReady. Use /api/restore to rebuild.",
-    })
-
-
-@app.route("/api/simulate/recover-node", methods=["POST"])
-def recover_node():
-    """Manually recover a specific node."""
-    data = request.json or {}
-    node_name = data.get("node")
-
-    if not node_name:
-        return jsonify({"error": "Provide 'node' name"}), 400
-
-    node = cluster.get_node(node_name)
-    if not node:
-        return jsonify({"error": f"Node '{node_name}' not found"}), 404
-
-    node.mark_ready()
-    # Restart pods on the recovered node
-    for pod in node.pods:
-        pod.start()
-
-    push_sse_event("recovery", {"action": "node-recovered", "node": node_name})
-    cluster._log_event("Recovery", f"Node '{node_name}' manually recovered")
-
-    return jsonify({"action": "recover-node", "node": node_name, "status": node.status.value})
-
-
-# ═══════════════════════════════════════════════════════════════════
-#  PROXY / TRAFFIC ROUTING
-# ═══════════════════════════════════════════════════════════════════
-
-@app.route("/api/route", methods=["POST"])
-def route_traffic():
-    """Route traffic through the proxy to a service."""
-    data = request.json or {}
-    service_name = data.get("service", "api-gateway-svc")
-    count = data.get("count", 1)
-
-    if count == 1:
-        req = ProxyRequest(service_name)
-        resp = proxy_server.route_request(req)
-        push_sse_event("traffic", resp.to_dict())
-        return jsonify(resp.to_dict())
-    else:
-        results = proxy_server.route_batch(service_name, count)
-        summary = {
-            "service": service_name,
-            "total": len(results),
-            "success": sum(1 for r in results if r.success),
-            "failed": sum(1 for r in results if not r.success),
-            "responses": [r.to_dict() for r in results[:10]],  # first 10 only
-        }
-        return jsonify(summary)
-
-
-@app.route("/api/proxy/stats")
-def proxy_stats():
-    return jsonify(proxy_server.get_all_stats())
-
-
-# ═══════════════════════════════════════════════════════════════════
-#  SNAPSHOT / RESTORE
-# ═══════════════════════════════════════════════════════════════════
-
-@app.route("/api/snapshot", methods=["POST"])
-def take_snapshot():
-    """Manually trigger a snapshot."""
-    filename = snapshot_engine.take_snapshot()
-    push_sse_event("snapshot", {"action": "created", "filename": filename})
-    return jsonify({"status": "snapshot_created", "filename": filename})
-
-
-@app.route("/api/snapshots")
-def list_snapshots():
-    return jsonify({"snapshots": snapshot_engine.list_snapshots()})
-
-
-@app.route("/api/restore", methods=["POST"])
-def restore_cluster():
-    """Restore cluster from the latest snapshot, or a specific one."""
-    data = request.json or {}
-    filename = data.get("filename")
-
-    # Stop background threads before restore
-    failure_detector.stop()
-    health_checker.stop()
-
-    if filename:
-        result = disaster_restore.restore_from_file(filename)
-    else:
-        result = disaster_restore.restore_from_latest()
-
-    # Restart background threads
-    health_checker.start()
-    failure_detector.start()
-
-    push_sse_event("restore", result)
-    return jsonify(result)
-
-
-# ═══════════════════════════════════════════════════════════════════
-#  HEALTH / METRICS
-# ═══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════
+#  ROUTES — Health & Metrics
+# ═══════════════════════════════════════════════════════════
 
 @app.route("/api/health")
-def cluster_health():
-    """Get cluster-wide health summary."""
-    return jsonify(health_checker.get_cluster_health_summary())
-
-
-@app.route("/api/health/<pod_name>")
-def pod_health(pod_name):
-    """Get health history for a specific pod."""
-    rec = health_checker.get_pod_health(pod_name)
-    if not rec:
-        return jsonify({"error": "Pod not found"}), 404
-    return jsonify(rec)
+def api_health():
+    states = monitor.get_all_states()
+    total = len(states)
+    healthy = sum(1 for s in states if s["status"] == "running" and s["health"] != "unhealthy")
+    pct = int(healthy / total * 100) if total > 0 else 100
+    return jsonify({
+        "total_containers": total,
+        "healthy": healthy,
+        "unhealthy": total - healthy,
+        "health_pct": pct,
+    })
 
 
 @app.route("/api/metrics")
-def get_metrics():
-    """Get comprehensive platform metrics."""
+def api_metrics():
+    health_summary = monitor.get_failure_summary()
+    recovery_summary = recovery_engine.get_summary()
     return jsonify({
-        "cluster": cluster.to_dict(),
-        "health": health_checker.get_cluster_health_summary(),
-        "failures": failure_detector.get_failure_summary(),
-        "recovery": recovery_engine.get_recovery_summary(),
-        "proxy": proxy_server.get_all_stats(),
-        "snapshots": len(snapshot_engine.list_snapshots()),
-        "restores": len(disaster_restore.get_restore_history()),
+        "health": health_summary,
+        "recovery": recovery_summary,
+        "ai_analyses": len(ai_analyzer.analysis_history),
+        "disaster_mode": recovery_engine.disaster_mode,
     })
 
+
+# ═══════════════════════════════════════════════════════════
+#  ROUTES — Failures & AI
+# ═══════════════════════════════════════════════════════════
 
 @app.route("/api/failures")
-def get_failures():
+def api_failures():
+    active = monitor.get_active_failures()
     return jsonify({
-        "active": failure_detector.get_active_failures(),
-        "summary": failure_detector.get_failure_summary(),
+        "active": active,
+        "total": len(monitor.failure_history),
     })
 
+
+@app.route("/api/ai/history")
+def api_ai_history():
+    return jsonify({"analyses": ai_analyzer.get_history()})
+
+
+# ═══════════════════════════════════════════════════════════
+#  ROUTES — Recovery & Deployment
+# ═══════════════════════════════════════════════════════════
 
 @app.route("/api/recovery")
-def get_recovery():
-    return jsonify(recovery_engine.get_recovery_summary())
+def api_recovery():
+    return jsonify(recovery_engine.get_summary())
 
 
-# ═══════════════════════════════════════════════════════════════════
-#  AUTOMATION SCRIPTS (Section 12)
-# ═══════════════════════════════════════════════════════════════════
+@app.route("/api/deployment")
+def api_deployment():
+    return jsonify(deployer.get_all())
+
+
+@app.route("/api/deploy", methods=["POST"])
+def api_deploy():
+    data = request.get_json() or {}
+    service = data.get("service", "")
+    image = data.get("image", "")
+    port = SERVICE_PORTS.get(service, 9001)
+
+    if not service or not image:
+        return jsonify({"error": "Provide 'service' and 'image'"}), 400
+
+    def run_deploy():
+        deployer.deploy(service, image, port)
+    threading.Thread(target=run_deploy, daemon=True).start()
+    return jsonify({"status": "deploying", "service": service, "image": image})
+
 
 @app.route("/api/scale", methods=["POST"])
-def scale_deployment():
-    """Scale a deployment to a new replica count."""
-    data = request.json or {}
-    dep_name = data.get("deployment")
-    replicas = data.get("replicas", 3)
-
-    dep = cluster.get_deployment(dep_name)
-    if not dep:
-        return jsonify({"error": f"Deployment '{dep_name}' not found"}), 404
-
-    old_count = dep.replicas_desired
-    dep.replicas_desired = replicas
-    recovery_engine._reconcile_deployment(dep)
-
-    push_sse_event("scale", {"deployment": dep_name, "old": old_count, "new": replicas})
-    cluster._log_event("Scale", f"Deployment '{dep_name}' scaled {old_count}→{replicas}")
-
-    return jsonify({
-        "deployment": dep_name,
-        "old_replicas": old_count,
-        "new_replicas": replicas,
-        "pods": [p.name for p in dep.pods],
-    })
+def api_scale():
+    data = request.get_json() or {}
+    service = data.get("service", "")
+    replicas = data.get("replicas", 2)
+    recovery_engine.scale_service(service, replicas)
+    return jsonify({"status": "scaled", "service": service, "replicas": replicas})
 
 
-@app.route("/api/reset", methods=["POST"])
-def reset_system():
-    """Full system reset from config."""
-    failure_detector.stop()
-    health_checker.stop()
-    snapshot_engine.stop()
-    init_system()
-    return jsonify({"status": "reset", "message": "System reinitialized from config"})
+# ═══════════════════════════════════════════════════════════
+#  ROUTES — Timeline
+# ═══════════════════════════════════════════════════════════
+
+@app.route("/api/timeline")
+def api_timeline():
+    return jsonify({"entries": timeline_entries[-50:]})
 
 
-# ═══════════════════════════════════════════════════════════════════
-#  ENTRY POINT
-# ═══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════
+#  ROUTES — Simulation
+# ═══════════════════════════════════════════════════════════
+
+@app.route("/api/simulate/kill-container", methods=["POST"])
+def sim_kill():
+    data = request.get_json() or {}
+    service_name = data.get("service", "healstack_api-gateway")
+    try:
+        containers = docker_client.containers.list(
+            filters={"label": f"com.docker.swarm.service.name={service_name}"}
+        )
+        if containers:
+            c = containers[0]
+            c.kill()
+            push_timeline("simulation", service_name, f"💀 Killed container {c.short_id}")
+            return jsonify({"status": "killed", "container": c.short_id})
+        return jsonify({"error": "No running container found"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)[:100]}), 500
+
+
+@app.route("/api/simulate/crash-service", methods=["POST"])
+def sim_crash():
+    data = request.get_json() or {}
+    port = data.get("port", 9001)
+    try:
+        import urllib.request
+        req = urllib.request.Request(f"http://localhost:{port}/simulate/crash")
+        urllib.request.urlopen(req, timeout=3)
+        return jsonify({"status": "crash triggered"})
+    except Exception:
+        return jsonify({"status": "crash signal sent"})
+
+
+@app.route("/api/simulate/toggle-health", methods=["POST"])
+def sim_toggle():
+    data = request.get_json() or {}
+    port = data.get("port", 9001)
+    try:
+        import urllib.request
+        req = urllib.request.Request(f"http://localhost:{port}/simulate/toggle-health")
+        urllib.request.urlopen(req, timeout=3)
+        return jsonify({"status": "health toggled"})
+    except Exception:
+        return jsonify({"status": "toggle signal sent"})
+
+
+# ═══════════════════════════════════════════════════════════
+#  SSE EVENT STREAM
+# ═══════════════════════════════════════════════════════════
+
+@app.route("/api/events/stream")
+def sse_stream():
+    def generate():
+        idx = len(event_stream)
+        while True:
+            while idx < len(event_stream):
+                yield f"data: {json.dumps(event_stream[idx])}\n\n"
+                idx += 1
+            time.sleep(1)
+    return Response(generate(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# ═══════════════════════════════════════════════════════════
+#  SYSTEM INIT
+# ═══════════════════════════════════════════════════════════
+
+def init_system():
+    global monitor, log_collector, ai_analyzer, recovery_engine, deployer, docker_client
+
+    docker_client = docker.from_env()
+    log_collector = LogCollector()
+    ai_analyzer = AIAnalyzer()
+    recovery_engine = RecoveryEngine()
+    deployer = BlueGreenDeployer(event_callback=lambda t, d: push_event(t, d))
+
+    monitor = HealthMonitor(stack_name="healstack", check_interval=5.0)
+    monitor.on_failure(on_failure_detected)
+    monitor.start()
+
+    push_event("system", {"message": "Self-healing infrastructure online"})
+
+    info = docker_client.info()
+    swarm = info.get("Swarm", {})
+    print(f"\n{'='*60}")
+    print(f"  SERVER SELF-HEALING PLATFORM")
+    print(f"  Swarm: {swarm.get('LocalNodeState', 'unknown')}")
+    print(f"  Nodes: {swarm.get('Nodes', 0)}  | Managers: {swarm.get('Managers', 0)}")
+    print(f"  Monitor: 5s  | Services: {len(SERVICE_PORTS)}")
+    print(f"  Dashboard: http://localhost:8000")
+    print(f"{'='*60}\n")
+
+
+init_system()
 
 if __name__ == "__main__":
-    app.run(debug=True, port=8000)
+    app.run(host="0.0.0.0", port=8000, debug=False, threaded=True)

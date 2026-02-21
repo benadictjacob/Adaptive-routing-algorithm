@@ -1,720 +1,379 @@
 /**
- * ═══════════════════════════════════════════════════════════════
- * AVRS — CROSS-ARCHITECTURE SIMULATOR CORE LOGIC
- * ═══════════════════════════════════════════════════════════════
+ * DOCKER SWARM SELF-HEALING DASHBOARD — App Logic
+ * Topology, AI Analysis, Timeline, Blue-Green Deployment, SSE
  */
 
 const API = "";
-let nodes = [], edges = [], nodeMap = {};
-let architecture = "microservice", config = {};
-let canvas, ctx, canvasW, canvasH;
-let transform = { x: 0, y: 0, scale: 0.8 };
-let hoveredNode = null, draggedNode = null, isPanning = false, panStart = { x: 0, y: 0 };
-let overlays = { latency: false, failures: false, congestion: false, clusters: false };
-let lastClickTime = 0, mouseDownPos = { x: 0, y: 0 };
+let eventCount = 0;
+let aiCount = 0;
 
-// Routing Animation State
-let isAnimating = false;
-let animationQueue = []; // { algo: 'adaptive'|'trad', path: [], hops: [], step: 0 }
+// ═══════════════════════════════════════════════════════════
+//  TAB SWITCHING + MOBILE MENU
+// ═══════════════════════════════════════════════════════════
 
-// Colors (Canvas ignores CSS variables, using hex values)
-const COLORS = {
-    cyan: "#06b6d4",
-    indigo: "#6366f1",
-    emerald: "#10b981",
-    amber: "#f59e0b",
-    rose: "#f43f5e",
-    textMid: "#94a3b8",
-    bgItem: "#1a1a2e",
-    border: "rgba(255, 255, 255, 0.1)"
-};
-
-// ─── INIT ───
-
-window.onload = () => {
-    canvas = document.getElementById("networkCanvas");
-    ctx = canvas.getContext("2d");
-
-    window.addEventListener("resize", resize);
-    canvas.addEventListener("mousedown", onMouseDown);
-    canvas.addEventListener("mousemove", onMouseMove);
-    canvas.addEventListener("mouseup", onMouseUp);
-    canvas.addEventListener("wheel", onWheel, { passive: false });
-
-    resize();
-    loadNetwork();
-    updateMetrics();
-    setInterval(updateMetrics, 5000);
-
-    requestAnimationFrame(renderLoop);
-};
-
-function resize() {
-    const rect = canvas.parentNode.getBoundingClientRect();
-    canvasW = rect.width;
-    canvasH = rect.height;
-
-    // Support High DPI displays
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = canvasW * dpr;
-    canvas.height = canvasH * dpr;
-    canvas.style.width = canvasW + "px";
-    canvas.style.height = canvasH + "px";
-
-    ctx.scale(dpr, dpr);
+function switchTab(name) {
+    document.querySelectorAll(".tab-content").forEach(t => t.classList.remove("active"));
+    document.querySelectorAll(".nav-item").forEach(n => n.classList.remove("active"));
+    document.getElementById("tab-" + name)?.classList.add("active");
+    document.querySelector(`.nav-item[data-tab="${name}"]`)?.classList.add("active");
+    // Close mobile menu
+    document.getElementById("sidebar")?.classList.remove("open");
+    if (name === "topology") setTimeout(refresh, 100);
+    if (name === "timeline") loadTimeline();
+    if (name === "logs") loadLogs();
 }
 
-// ─── DATA LOADING ───
+// ═══════════════════════════════════════════════════════════
+//  LOG EXPLORER
+// ═══════════════════════════════════════════════════════════
 
-async function loadNetwork() {
-    try {
-        const res = await fetch(API + "/api/network");
-        const data = await res.json();
-        nodes = data.nodes;
-        edges = data.edges;
-        architecture = data.architecture;
-        config = data;  // store full response as config
+async function loadLogs() {
+    const target = document.getElementById("log-target")?.value;
+    if (!target) return;
 
-        nodeMap = {};
-        nodes.forEach(n => nodeMap[n.id] = n);
-
-        updateUI();
-        logEvent(`Architecture: ${data.label} initialized.`);
-    } catch (e) {
-        console.error("Load error:", e);
-        logEvent("Error: Failed to fetch network data.");
-    }
-}
-
-function updateUI() {
-    document.getElementById("archTitle").textContent = config.label || architecture;
-    document.getElementById("stat-density").textContent = `${nodes.length} nodes`;
-    document.getElementById("stat-fail").textContent = `${((config.fail_prob || 0) * 100).toFixed(1)}%`;
-    document.getElementById("stat-topo").textContent = (config.latency || "N/A").toUpperCase();
-
-    // Populate start node dropdown
-    const selStart = document.getElementById("startNode");
-    const prevStart = selStart.value;
-    selStart.innerHTML = nodes.map(n => `<option value="${n.id}">${n.id} (${n.role})</option>`).join("");
-    if (nodes.find(n => n.id === prevStart)) selStart.value = prevStart;
-
-    // Build role legend
-    const legendEl = document.getElementById("roleLegend");
-    if (legendEl && config.roles) {
-        legendEl.innerHTML = config.roles.map(r => `
-            <div class="legend-item">
-                <span class="legend-dot" style="background:${CLUSTER_COLORS[r.color_idx]}"></span>
-                <span class="legend-label">${r.name.replace(/_/g, ' ')}</span>
-                <span class="legend-count">×${r.count}</span>
-            </div>
-        `).join("");
-    }
-}
-
-// ─── RENDERING ───
-
-function renderLoop() {
-    ctx.clearRect(0, 0, canvasW, canvasH);
-
-    ctx.save();
-    // Center origin
-    ctx.translate(canvasW / 2 + transform.x, canvasH / 2 + transform.y);
-    ctx.scale(transform.scale, transform.scale);
-
-    drawOverlays();
-
-    // Edges
-    ctx.beginPath();
-    edges.forEach(e => {
-        const s = nodeMap[e.source], t = nodeMap[e.target];
-        if (s && t) {
-            ctx.moveTo(s.x, s.y);
-            ctx.lineTo(t.x, t.y);
-        }
-    });
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.08)";
-    ctx.lineWidth = 1 / transform.scale;
-    ctx.stroke();
-
-    // Nodes
-    nodes.forEach(n => {
-        const isHovered = hoveredNode === n.id;
-        const isNeighborOfHovered = hoveredNode && nodeMap[hoveredNode].neighbors.includes(n.id);
-
-        const clusterColor = getClusterColor(n.cluster || 0);
-        const statusColor = !n.alive ? COLORS.rose : (n.load > 15 ? COLORS.rose : (n.load > 8 ? COLORS.amber : clusterColor));
-
-        // Cluster region ring (outer glow/neighbor highlight)
-        ctx.beginPath();
-        ctx.arc(n.x, n.y, (isHovered ? 16 : (isNeighborOfHovered ? 13 : 12)), 0, Math.PI * 2);
-        ctx.fillStyle = isHovered ? "#ffffff" : clusterColor;
-        ctx.globalAlpha = isHovered ? 0.3 : (isNeighborOfHovered ? 0.25 : 0.15);
-        ctx.fill();
-        ctx.globalAlpha = 1.0;
-
-        // Node Body
-        ctx.beginPath();
-        ctx.arc(n.x, n.y, isHovered ? 10 : 7, 0, Math.PI * 2);
-        ctx.fillStyle = statusColor;
-        ctx.globalAlpha = n.alive ? (n.trust * 0.7 + 0.3) : 0.4;
-        ctx.fill();
-        ctx.globalAlpha = 1.0;
-
-        // Status Ring
-        if (!n.alive) {
-            // Dead: red dashed ring
-            ctx.beginPath();
-            ctx.arc(n.x, n.y, isHovered ? 12 : 9, 0, Math.PI * 2);
-            ctx.strokeStyle = COLORS.rose;
-            ctx.lineWidth = 2.5 / transform.scale;
-            ctx.setLineDash([4, 3]);
-            ctx.stroke();
-            ctx.setLineDash([]);
-            // X mark
-            const s = 4;
-            ctx.beginPath();
-            ctx.moveTo(n.x - s, n.y - s); ctx.lineTo(n.x + s, n.y + s);
-            ctx.moveTo(n.x + s, n.y - s); ctx.lineTo(n.x - s, n.y + s);
-            ctx.strokeStyle = COLORS.rose;
-            ctx.lineWidth = 2 / transform.scale;
-            ctx.stroke();
-        } else if (isHovered) {
-            ctx.beginPath();
-            ctx.arc(n.x, n.y, 12, 0, Math.PI * 2);
-            ctx.strokeStyle = "#ffffff";
-            ctx.lineWidth = 2;
-            ctx.stroke();
-        } else if (isNeighborOfHovered) {
-            ctx.beginPath();
-            ctx.arc(n.x, n.y, 9, 0, Math.PI * 2);
-            ctx.strokeStyle = "rgba(255,255,255,0.5)";
-            ctx.lineWidth = 1;
-            ctx.stroke();
-        }
-
-        // Vector Tag (if zoomed in or hovered)
-        if (transform.scale > 1.2 || isHovered) {
-            ctx.font = "10px JetBrains Mono";
-            ctx.fillStyle = "rgba(255,255,255,0.6)";
-            ctx.textAlign = "center";
-            ctx.fillText(n.id, n.x, n.y - (isHovered ? 18 : 14));
-        }
-    });
-
-    // Routing Paths
-    drawRoutingPaths();
-
-    ctx.restore();
-    requestAnimationFrame(renderLoop);
-}
-
-// Cluster color palette — distinct colors for each region
-const CLUSTER_COLORS = [
-    "#06b6d4", // cyan
-    "#a855f7", // purple
-    "#f97316", // orange
-    "#10b981", // emerald
-    "#ec4899", // pink
-    "#eab308", // yellow
-];
-
-function getClusterColor(cluster) {
-    return CLUSTER_COLORS[cluster % CLUSTER_COLORS.length];
-}
-
-function getLoadColor(load, alive) {
-    if (!alive) return COLORS.rose;
-    if (load > 15) return COLORS.rose;
-    if (load > 8) return COLORS.amber;
-    return COLORS.emerald;
-}
-
-function drawRoutingPaths() {
-    animationQueue.forEach(q => {
-        if (!q.path || q.path.length < 2) return;
-
-        ctx.beginPath();
-        const start = nodeMap[q.path[0]];
-        if (!start) return;
-        ctx.moveTo(start.x, start.y);
-
-        const shownSteps = Math.min(q.step, q.path.length);
-        for (let i = 1; i < shownSteps; i++) {
-            const n = nodeMap[q.path[i]];
-            if (n) ctx.lineTo(n.x, n.y);
-        }
-
-        ctx.strokeStyle = q.algo === 'adaptive' ? COLORS.cyan : COLORS.textMid;
-        ctx.lineWidth = 4 / transform.scale;
-        ctx.lineJoin = "round";
-        ctx.lineCap = "round";
-
-        if (q.algo === 'adaptive') {
-            ctx.shadowBlur = 15;
-            ctx.shadowColor = COLORS.cyan;
-        }
-        ctx.stroke();
-        ctx.shadowBlur = 0;
-
-        // Packet head
-        const currentId = q.path[Math.floor(q.step)];
-        const node = nodeMap[currentId];
-        if (node && q.step < q.path.length) {
-            ctx.beginPath();
-            ctx.arc(node.x, node.y, 10 / transform.scale, 0, Math.PI * 2);
-            ctx.fillStyle = q.algo === 'adaptive' ? COLORS.cyan : "#ffffff";
-            ctx.fill();
-        }
-    });
-}
-
-function drawOverlays() {
-    if (overlays.latency) {
-        ctx.fillStyle = "rgba(99, 102, 241, 0.03)";
-        ctx.fillRect(-2000, -2000, 4000, 4000);
-    }
-    if (overlays.failures) {
-        nodes.filter(n => !n.alive).forEach(n => {
-            ctx.beginPath();
-            ctx.arc(n.x, n.y, 40, 0, Math.PI * 2);
-            ctx.fillStyle = "rgba(244, 63, 94, 0.04)";
-            ctx.fill();
-        });
-    }
-}
-
-// ─── INTERACTIONS ───
-
-function onMouseDown(e) {
-    const p = getMousePos(e);
-    mouseDownPos = { x: e.clientX, y: e.clientY };
-    const node = findNodeAt(p.x, p.y);
-    if (node) {
-        draggedNode = node;
-    } else {
-        // Pan the canvas
-        isPanning = true;
-        panStart = { x: e.clientX - transform.x, y: e.clientY - transform.y };
-    }
-}
-
-function onMouseMove(e) {
-    const p = getMousePos(e);
-    const node = findNodeAt(p.x, p.y);
-    hoveredNode = node ? node.id : null;
-
-    if (draggedNode) {
-        const dx = e.clientX - mouseDownPos.x;
-        const dy = e.clientY - mouseDownPos.y;
-        // Only drag if moved more than 5px
-        if (Math.sqrt(dx * dx + dy * dy) > 5) {
-            draggedNode.x = (p.x - canvasW / 2 - transform.x) / transform.scale;
-            draggedNode.y = (p.y - canvasH / 2 - transform.y) / transform.scale;
-        }
-    } else if (isPanning) {
-        transform.x = e.clientX - panStart.x;
-        transform.y = e.clientY - panStart.y;
-    }
-
-    updateTooltip(e, node);
-    canvas.style.cursor = node ? "pointer" : (isPanning ? "grabbing" : "grab");
-}
-
-function onMouseUp(e) {
-    if (draggedNode) {
-        const dx = e.clientX - mouseDownPos.x;
-        const dy = e.clientY - mouseDownPos.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        // Click (not drag) → toggle node alive/dead
-        if (dist < 5) {
-            toggleNode(draggedNode.id);
-        }
-    }
-    draggedNode = null;
-    isPanning = false;
-}
-
-function onWheel(e) {
-    e.preventDefault();
-    const zoom = e.deltaY < 0 ? 1.15 : 0.85;
-    transform.scale = Math.max(0.1, Math.min(15, transform.scale * zoom));
-}
-
-function getMousePos(e) {
-    const rect = canvas.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
-}
-
-function findNodeAt(mx, my) {
-    return nodes.find(n => {
-        const nx = n.x * transform.scale + canvasW / 2 + transform.x;
-        const ny = n.y * transform.scale + canvasH / 2 + transform.y;
-        const dx = nx - mx;
-        const dy = ny - my;
-        return Math.sqrt(dx * dx + dy * dy) < 15;
-    });
-}
-
-// ─── ANALYSIS ───
-
-async function runAnalysis() {
-    const start = document.getElementById("startNode").value;
-    const target = [
-        parseFloat(document.getElementById("v0").value),
-        parseFloat(document.getElementById("v1").value),
-        parseFloat(document.getElementById("v2").value),
-        parseFloat(document.getElementById("v3").value)
-    ];
+    const viewer = document.getElementById("log-viewer");
+    if (!viewer) return;
 
     try {
-        const res = await fetch(API + "/api/route", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ start, target })
-        });
-        const data = await res.json();
+        viewer.innerHTML = '<div class="empty-state">Fetching logs...</div>';
+        const r = await fetch(`${API}/api/logs/${target}?tail=200`).then(r => r.json());
 
-        // Handle section failure: all nodes in target section are dead
-        if (data.section_failure) {
-            const roleName = (data.target_role || 'unknown').replace(/_/g, ' ');
-            logEvent(`SECTION FAILURE: All nodes in "${roleName}" section are dead. Route returns to source.`);
-
-            // Show failure in decision panel
-            const panel = document.getElementById("decisionBody");
-            panel.innerHTML = `
-                <div class="decision-card" style="border-color:var(--rose);background:rgba(244,63,94,0.1)">
-                    <div class="dec-node" style="color:var(--rose)">SECTION FAILURE</div>
-                    <div style="margin:8px 0;color:var(--text-high)">
-                        All nodes in <strong style="color:var(--rose)">${roleName}</strong> section are dead.
-                    </div>
-                    <div style="color:var(--text-mid);font-size:12px">
-                        Route cannot cross section boundary.<br>
-                        Returning to source node <strong>${start}</strong>.
-                    </div>
-                </div>
-            `;
-
-            // Minimal animation: just blink at source
-            animationQueue = [
-                { algo: 'adaptive', path: [start], hops: [], step: 0 }
-            ];
+        if (!r.logs || r.logs.startsWith("[ERROR]")) {
+            viewer.innerHTML = `<div class="empty-state error">${r.logs || "No logs found"}</div>`;
             return;
         }
 
-        // Normal routing result
-        const targetRole = (data.target_role || '').replace(/_/g, ' ');
+        // Format logs: highlight timestamps and keywords
+        const formatted = r.logs
+            .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+            .replace(/(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})/g, '<span class="log-time">$1</span>')
+            .replace(/(ERROR|CRITICAL|FAIL|Failed)/gi, '<span class="log-err">$1</span>')
+            .replace(/(INFO|SUCCESS|OK)/gi, '<span class="log-ok">$1</span>');
 
-        // Reset and populate animation
-        animationQueue = [
-            { algo: 'adaptive', path: data.adaptive.path, hops: data.adaptive.hops, step: 0 },
-            { algo: 'trad', path: data.trad.path, step: 0 }
-        ];
-
-        // Dynamic step increment
-        let st = 0;
-        const interval = setInterval(() => {
-            st += 0.2;
-            animationQueue.forEach(q => q.step = st);
-
-            // Trigger decision panel update on integer steps
-            if (st % 1 < 0.2) {
-                const hopIdx = Math.floor(st);
-                if (data.adaptive.hops[hopIdx]) updateDecisionPanel(data.adaptive.hops[hopIdx]);
-            }
-
-            if (st > Math.max(data.adaptive.path.length, data.trad.path.length)) {
-                clearInterval(interval);
-            }
-        }, 60);
-
-        updateMetrics();
-
-        if (!data.adaptive.success) {
-            logEvent(`Route FAILED: crossed section boundary to "${targetRole}". Path returned to source.`);
-        } else {
-            logEvent(`Route: [${start}] -> ${targetRole} section (${data.adaptive.total_hops} hops)`);
-        }
-    } catch (e) { logEvent(`Error: ${e.message}`); }
-}
-
-function updateDecisionPanel(hop) {
-    const panel = document.getElementById("decisionBody");
-    if (!hop) return;
-    if (hop.step === 0) panel.innerHTML = "";
-
-    const card = document.createElement("div");
-    card.className = "decision-card";
-
-    const topScores = (hop.scores || []).slice(0, 4).map(s =>
-        `<div class="score-row">
-            <span>${s.neighbor}</span>
-            <span class="score-val">${(s.score || 0).toFixed(3)}</span>
-            <span class="score-meta">load:${s.load || 0}</span>
-        </div>`
-    ).join("");
-
-    const dist = hop.distance !== undefined ? hop.distance : '?';
-    const next = hop.chosen_next || (hop.is_terminal ? '✓ TARGET' : '✗ FAILED');
-    const nextColor = hop.is_terminal ? 'var(--emerald)' : (hop.chosen_next ? 'var(--cyan)' : 'var(--rose)');
-
-    card.innerHTML = `
-        <div class="dec-node">STEP ${hop.step !== undefined ? hop.step : '?'}: ${hop.node_id}</div>
-        <div class="dec-dist">Distance to target: ${typeof dist === 'number' ? dist.toFixed(4) : dist}</div>
-        <div class="dec-scores">${topScores}</div>
-        <div class="dec-next" style="color:${nextColor}">→ ${next}</div>
-    `;
-    panel.prepend(card);
-}
-
-// ─── CONTROLS ───
-
-async function switchMode(mode) {
-    try {
-        const res = await fetch(API + "/api/architecture", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ mode })
-        });
-        animationQueue = [];
-        loadNetwork();
-
-        document.querySelectorAll(".arch-btn").forEach(b => {
-            b.classList.toggle("active", b.textContent.toLowerCase().includes(mode));
-        });
-    } catch (e) { logEvent(`Error switching mode: ${e.message}`); }
-}
-
-// ─── NODE TOGGLE (click to kill / recover) ───
-
-async function toggleNode(nodeId) {
-    try {
-        const res = await fetch(API + `/api/node/${nodeId}/toggle`, { method: "POST" });
-        const data = await res.json();
-        if (data.id) {
-            loadNetwork();
-            const stateLabels = {
-                'ALIVE': '🟢 RECOVERED',
-                'LOADED': '🟠 STRESSED (Amber)',
-                'DEAD': '🔴 KILLED'
-            };
-            logEvent(`Node ${nodeId}: ${stateLabels[data.state] || 'Updated'}`);
-        }
+        viewer.innerHTML = `<pre>${formatted}</pre>`;
+        viewer.scrollTop = viewer.scrollHeight;
     } catch (e) {
-        logEvent(`Error toggling node: ${e.message}`);
+        viewer.innerHTML = `<div class="empty-state error">Fetch failed: ${e.message}</div>`;
     }
 }
 
-async function simFailure(type) {
-    try {
-        await fetch(API + "/api/simulate/failure", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ type })
+document.getElementById("menu-toggle")?.addEventListener("click", () => {
+    document.getElementById("sidebar")?.classList.toggle("open");
+});
+
+// ═══════════════════════════════════════════════════════════
+//  SVG TOPOLOGY RENDERING
+// ═══════════════════════════════════════════════════════════
+
+function renderTopology(services, containers) {
+    const canvas = document.getElementById("topology-canvas");
+    if (!canvas) return;
+    const W = canvas.clientWidth;
+    const H = canvas.clientHeight;
+    canvas.innerHTML = "";
+    if (W < 10 || H < 10) return;
+
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("width", W);
+    svg.setAttribute("height", H);
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    canvas.appendChild(svg);
+
+    // Server manager
+    const cx = W / 2, manY = 50;
+    drawRect(svg, cx - 65, manY - 18, 130, 36, "#161b22", "#58a6ff", 2);
+    drawText(svg, cx, manY + 5, "🐳 Server Manager", "#58a6ff", 11, true);
+
+    // Services row
+    const svcList = services || [];
+    if (svcList.length === 0) return;
+    const svcSpacing = Math.min(W / (svcList.length + 1), 260);
+    const svcStartX = (W - svcSpacing * (svcList.length - 1)) / 2;
+    const svcY = 140;
+
+    svcList.forEach((svc, i) => {
+        const sx = svcStartX + svcSpacing * i;
+        const svcName = svc.name.replace("healstack_", "");
+        const running = svc.replicas_running || 0;
+        const desired = svc.replicas_desired || 0;
+        const healthy = running >= desired;
+        const color = healthy ? "#238636" : "#da3633";
+
+        // Line to manager
+        drawLine(svg, cx, manY + 18, sx, svcY - 24, "#30363d");
+
+        // Service box
+        drawRect(svg, sx - 65, svcY - 24, 130, 48, "#0d1117", color, 2);
+        drawText(svg, sx, svcY - 4, svcName, "#f0f6fc", 11, true);
+        drawText(svg, sx, svcY + 14, `${running}/${desired} replicas`, "#8b949e", 9, false);
+
+        // Containers below
+        const svcContainers = (containers || []).filter(c =>
+            c.service_name && (
+                c.service_name.includes(svcName.replace(/-/g, "_")) ||
+                c.service_name.includes(svcName) ||
+                c.service_name === svc.name
+            )
+        );
+
+        const numC = svcContainers.length || 0;
+        const cSpacing = Math.min(50, 130 / (numC + 1));
+        const cStartX = sx - (numC - 1) * cSpacing / 2;
+        const cY = svcY + 75;
+
+        svcContainers.forEach((c, j) => {
+            const ccx = cStartX + cSpacing * j;
+
+            // Line
+            drawLine(svg, sx, svcY + 24, ccx, cY - 14, "#30363d");
+
+            // Dot color
+            let fill = "#238636";
+            if (c.status === "exited" || c.health === "unhealthy") fill = "#da3633";
+            if (c.status === "restarting") fill = "#d29922";
+
+            drawCircle(svg, ccx, cY, 13, fill, c.status === "running" ? 0.12 : 0);
+
+            // Container short id
+            const label = c.id || c.name?.slice(-8) || "?";
+            drawText(svg, ccx, cY + 26, label.slice(0, 8), "#8b949e", 7, false);
         });
-        loadNetwork();
-        logEvent(`Architecture event triggered: ${type}`);
-    } catch (e) { logEvent(`Error: ${e.message}`); }
-}
-
-async function resetSystem() {
-    await fetch(API + "/api/reset", { method: "POST" });
-    animationQueue = [];
-    loadNetwork();
-    updateMetrics();
-    document.getElementById("decisionBody").innerHTML = '<div class="empty-state">System reset and metrics cleared.</div>';
-}
-
-
-
-// ─── OVERLAYS & ZOOM ───
-
-function toggleOverlay(name) {
-    overlays[name] = !overlays[name];
-}
-
-function zoom(factor) {
-    transform.scale = Math.max(0.1, Math.min(15, transform.scale * factor));
-}
-
-function resetZoom() {
-    transform = { x: 0, y: 0, scale: 0.8 };
-}
-
-// ─── TIMELINE ───
-
-let tlPlaying = false;
-let tlInterval = null;
-
-function tlStep(dir) {
-    if (animationQueue.length === 0) return;
-    const maxLen = Math.max(...animationQueue.map(q => q.path ? q.path.length : 0));
-    animationQueue.forEach(q => {
-        q.step = Math.max(0, Math.min(maxLen, q.step + dir));
     });
-    document.getElementById("frameIdx").textContent = Math.floor(animationQueue[0]?.step || 0);
-    document.getElementById("frameCount").textContent = maxLen;
-    document.getElementById("tlSlider").value = maxLen > 0 ? (animationQueue[0].step / maxLen) * 100 : 0;
 }
 
-function tlPlay() {
-    if (tlPlaying) {
-        clearInterval(tlInterval);
-        tlPlaying = false;
-        return;
+function drawRect(svg, x, y, w, h, fill, stroke, sw) {
+    const r = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    r.setAttribute("x", x); r.setAttribute("y", y);
+    r.setAttribute("width", w); r.setAttribute("height", h);
+    r.setAttribute("rx", 6); r.setAttribute("fill", fill);
+    r.setAttribute("stroke", stroke); r.setAttribute("stroke-width", sw);
+    svg.appendChild(r);
+}
+
+function drawCircle(svg, cx, cy, r, fill, glowOpacity) {
+    if (glowOpacity > 0) {
+        const g = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        g.setAttribute("cx", cx); g.setAttribute("cy", cy);
+        g.setAttribute("r", r + 6); g.setAttribute("fill", fill);
+        g.setAttribute("opacity", glowOpacity);
+        svg.appendChild(g);
     }
-    tlPlaying = true;
-    const maxLen = Math.max(...animationQueue.map(q => q.path ? q.path.length : 0));
-    if (maxLen === 0) return;
-
-    // Reset to start
-    animationQueue.forEach(q => q.step = 0);
-
-    tlInterval = setInterval(() => {
-        animationQueue.forEach(q => q.step += 0.15);
-        const currentStep = animationQueue[0]?.step || 0;
-        document.getElementById("frameIdx").textContent = Math.floor(currentStep);
-        document.getElementById("frameCount").textContent = maxLen;
-        document.getElementById("tlSlider").value = (currentStep / maxLen) * 100;
-
-        if (currentStep >= maxLen) {
-            clearInterval(tlInterval);
-            tlPlaying = false;
-        }
-    }, 60);
+    const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    c.setAttribute("cx", cx); c.setAttribute("cy", cy);
+    c.setAttribute("r", r); c.setAttribute("fill", fill);
+    c.setAttribute("stroke", "#161b22"); c.setAttribute("stroke-width", 2);
+    svg.appendChild(c);
 }
 
-// ─── UTILS ───
+function drawLine(svg, x1, y1, x2, y2, color) {
+    const l = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    l.setAttribute("x1", x1); l.setAttribute("y1", y1);
+    l.setAttribute("x2", x2); l.setAttribute("y2", y2);
+    l.setAttribute("stroke", color); l.setAttribute("stroke-width", 1);
+    l.setAttribute("stroke-dasharray", "4,3");
+    svg.appendChild(l);
+}
 
-async function updateMetrics() {
+function drawText(svg, x, y, text, fill, size, bold) {
+    const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    t.setAttribute("x", x); t.setAttribute("y", y);
+    t.setAttribute("fill", fill); t.setAttribute("font-size", size);
+    t.setAttribute("text-anchor", "middle");
+    t.setAttribute("font-family", "'Inter', sans-serif");
+    if (bold) t.setAttribute("font-weight", "600");
+    t.textContent = text;
+    svg.appendChild(t);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  DATA REFRESH
+// ═══════════════════════════════════════════════════════════
+
+async function refresh() {
     try {
-        const res = await fetch(API + "/api/metrics");
-        const data = await res.json();
+        const [svcR, ctR, hR, mR] = await Promise.all([
+            fetch(`${API}/api/services`).then(r => r.json()),
+            fetch(`${API}/api/containers`).then(r => r.json()),
+            fetch(`${API}/api/health`).then(r => r.json()),
+            fetch(`${API}/api/metrics`).then(r => r.json()),
+        ]);
 
-        document.getElementById("m-ad-rate").textContent = `${data.adaptive.success_rate}%`;
-        document.getElementById("m-ad-hops").textContent = data.adaptive.avg_hops;
-        document.getElementById("m-ad-time").textContent = data.adaptive.avg_time.toFixed(2);
+        const services = svcR.services || [];
+        const containers = ctR.containers || [];
+        const pct = hR.health_pct ?? 100;
+        const active = mR.health?.active ?? 0;
 
-        document.getElementById("m-tr-rate").textContent = `${data.trad.success_rate}%`;
-        document.getElementById("m-tr-hops").textContent = data.trad.avg_hops;
-        document.getElementById("m-tr-time").textContent = data.trad.avg_time.toFixed(2);
-    } catch (e) { }
-}
+        // Metrics
+        el("m-services", services.length);
+        el("m-containers", containers.length);
+        el("m-health", pct + "%");
+        el("m-recovered", mR.recovery?.total_actions ?? 0);
+        el("m-failures", active);
 
-function updateTooltip(e, node) {
-    const panel = document.getElementById("nodeInspector");
-    if (!panel) return;
+        // Health styling
+        const hPill = document.querySelector(".metric-pill.healthy .metric-value");
+        if (hPill) hPill.style.color = pct >= 80 ? "#238636" : pct >= 50 ? "#d29922" : "#da3633";
 
-    if (!node) return;
+        const fPill = document.getElementById("m-fail-pill");
+        if (fPill) fPill.style.display = active > 0 ? "flex" : "flex";
 
-    const clusterColor = getClusterColor(node.cluster || 0);
-    const roleLabel = (node.role || 'unknown').replace(/_/g, ' ');
-    const statusLabel = node.alive ? 'ALIVE' : 'DEAD';
-    const statusColor = node.alive ? '#10b981' : '#f43f5e';
-    const neighborCount = (node.neighbors || []).length;
-
-    panel.innerHTML = `
-        <div class="insp-header">
-            <span class="insp-dot" style="background:${clusterColor}"></span>
-            <span class="insp-id">${node.id}</span>
-            <span class="insp-status" style="color:${statusColor}">${statusLabel}</span>
-        </div>
-        <div class="insp-role" style="color:${clusterColor}">${roleLabel}</div>
-        <div class="insp-details">
-            <div class="insp-row">
-                <span class="insp-label">Vector</span>
-                <span class="insp-val mono" id="inspVector">[${node.vector.map(v => v.toFixed(2)).join(", ")}]</span>
-            </div>
-            <div class="insp-row">
-                <span class="insp-label">Load</span>
-                <span class="insp-val">${node.load}</span>
-            </div>
-            <div class="insp-row">
-                <span class="insp-label">Trust</span>
-                <span class="insp-val">${node.trust.toFixed(2)}</span>
-            </div>
-            <div class="insp-row">
-                <span class="insp-label">Neighbors</span>
-                <span class="insp-val">${neighborCount}</span>
-            </div>
-        </div>
-        <div class="insp-actions" style="display:flex; gap:6px; margin-top:8px">
-            <button class="btn btn-sm btn-primary" style="flex:1" onclick="setTargetVector('${node.vector.join(",")}')">Set as Target</button>
-            <button class="btn btn-sm btn-ghost" onclick="copyVectorToClipboard('${node.vector.join(",")}')">Copy</button>
-        </div>
-        <div class="insp-hint">Click node to ${node.alive ? 'Kill' : 'Recover'}</div>
-    `;
-}
-
-function setTargetVector(vecStr) {
-    const vec = vecStr.split(",").map(Number);
-    vec.forEach((v, i) => {
-        const input = document.getElementById("v" + i);
-        if (input) input.value = v.toFixed(2);
-    });
-    logEvent(`Target vector updated to: [${vecStr}]`);
-}
-
-function copyVectorToClipboard(vecStr) {
-    navigator.clipboard.writeText(`[${vecStr}]`).then(() => {
-        logEvent("Vector copied to clipboard.");
-    });
-}
-
-function logEvent(msg) {
-    const log = document.getElementById("eventLog");
-    const now = new Date().toLocaleTimeString();
-    const entry = document.createElement("div");
-    entry.className = "log-entry";
-    entry.innerHTML = `<span class="log-time">[${now}]</span> ${msg}`;
-    log.prepend(entry);
-    if (log.children.length > 30) log.removeChild(log.lastChild);
-}
-
-// ─── SIDEBAR RESIZE ───
-
-(function initResize() {
-    const grid = document.querySelector(".main-grid");
-    const leftHandle = document.getElementById("resizeHandleLeft");
-    const rightHandle = document.getElementById("resizeHandleRight");
-
-    if (!grid || !leftHandle || !rightHandle) return;
-
-    let activeSide = null; // 'left' or 'right'
-    let leftWidth = 280;
-    let rightWidth = 320;
-
-    function updateGrid() {
-        grid.style.gridTemplateColumns = `${leftWidth}px 1fr ${rightWidth}px`;
-    }
-
-    const startResize = (e, side) => {
-        e.preventDefault();
-        activeSide = side;
-        document.body.style.cursor = "col-resize";
-        document.body.style.userSelect = "none";
-        (side === 'left' ? leftHandle : rightHandle).classList.add("active");
-    };
-
-    leftHandle.addEventListener("mousedown", (e) => startResize(e, 'left'));
-    rightHandle.addEventListener("mousedown", (e) => startResize(e, 'right'));
-
-    window.addEventListener("mousemove", (e) => {
-        if (!activeSide) return;
-
-        if (activeSide === 'left') {
-            leftWidth = Math.max(250, Math.min(e.clientX, window.innerWidth * 0.4));
-        } else {
-            rightWidth = Math.max(200, Math.min(window.innerWidth - e.clientX, window.innerWidth * 0.5));
+        // Status dot
+        const dot = document.getElementById("status-dot");
+        const st = document.getElementById("cluster-status");
+        if (dot && st) {
+            if (pct >= 80) { dot.className = "status-dot online"; st.textContent = "System Healthy"; }
+            else { dot.className = "status-dot offline"; st.textContent = "Degraded"; }
         }
-        updateGrid();
-    });
 
-    window.addEventListener("mouseup", () => {
-        if (!activeSide) return;
-        (activeSide === 'left' ? leftHandle : rightHandle).classList.remove("active");
-        activeSide = null;
-        document.body.style.cursor = "";
-        document.body.style.userSelect = "";
-        resize(); // recalculate canvas size
-    });
-})();
+        // Disaster mode
+        if (mR.disaster_mode) {
+            st.textContent = "🌪️ DISASTER MODE";
+        }
+
+        renderTopology(services, containers);
+    } catch (err) {
+        console.error("Refresh:", err);
+    }
+}
+
+function el(id, val) {
+    const e = document.getElementById(id);
+    if (e) e.textContent = val;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  SSE
+// ═══════════════════════════════════════════════════════════
+
+function connectSSE() {
+    const src = new EventSource(`${API}/api/events/stream`);
+    src.onmessage = function (ev) {
+        try {
+            const payload = JSON.parse(ev.data);
+            addEvent(payload);
+            if (payload.type === "ai_analysis") addAIEntry(payload.data);
+            refresh();
+        } catch (e) { }
+    };
+    src.onerror = () => { src.close(); setTimeout(connectSSE, 5000); };
+}
+
+function addEvent(ev) {
+    const log = document.getElementById("event-log");
+    if (!log) return;
+    const div = document.createElement("div");
+    const sev = ev.data?.severity?.toLowerCase?.() || "ok";
+    div.className = `event-entry ${sev === "critical" ? "ev-crit" : sev === "warning" ? "ev-warn" : "ev-ok"}`;
+    const t = new Date((ev.timestamp || 0) * 1000).toLocaleTimeString([], { hour12: false });
+    const msg = ev.data?.message || JSON.stringify(ev.data || {}).slice(0, 80);
+    div.innerHTML = `<span class="event-time">${t}</span>${ev.type}: ${msg}`;
+    log.prepend(div);
+    eventCount++;
+    el("event-count", eventCount);
+    while (log.childNodes.length > 80) log.removeChild(log.lastChild);
+}
+
+function addAIEntry(data) {
+    const panel = document.getElementById("ai-panel");
+    if (!panel) return;
+    const empty = panel.querySelector(".empty-state");
+    if (empty) empty.remove();
+
+    const a = data.analysis || {};
+    const div = document.createElement("div");
+    div.className = "ai-entry";
+    div.innerHTML = `
+        <div class="ai-type">🔍 ${a.error_type || "Unknown"} <span style="color:var(--text-muted);font-weight:400">${a.severity || ""}</span></div>
+        <div class="ai-human">${a.human_explanation || a.root_cause || ""}</div>
+        <div class="ai-fix">💡 ${a.fix_instructions || ""}</div>
+        <div class="ai-category">${a.category || ""}</div>
+    `;
+    panel.prepend(div);
+    aiCount++;
+    el("ai-count", aiCount);
+    while (panel.childNodes.length > 20) panel.removeChild(panel.lastChild);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  TIMELINE
+// ═══════════════════════════════════════════════════════════
+
+async function loadTimeline() {
+    try {
+        const r = await fetch(`${API}/api/timeline`).then(r => r.json());
+        const panel = document.getElementById("timeline-panel");
+        if (!panel) return;
+        const entries = r.entries || [];
+        if (entries.length === 0) {
+            panel.innerHTML = '<div class="empty-state">No events yet. Trigger a failure to see the full lifecycle.</div>';
+            return;
+        }
+        panel.innerHTML = "";
+        entries.reverse().forEach(e => {
+            const div = document.createElement("div");
+            div.className = "tl-entry";
+            const t = new Date((e.timestamp || 0) * 1000).toLocaleTimeString([], { hour12: false });
+            div.innerHTML = `
+                <div class="tl-phase ${e.phase}">${e.phase}</div>
+                <div class="tl-body">
+                    <div class="tl-msg">${e.message}</div>
+                    <div class="tl-svc">${e.service}</div>
+                </div>
+                <div class="tl-time">${t}</div>
+            `;
+            panel.appendChild(div);
+        });
+    } catch (e) {
+        console.error("Timeline:", e);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  SIMULATION CONTROLS
+// ═══════════════════════════════════════════════════════════
+
+const post = (url, body) => fetch(url, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+}).then(r => r.json()).catch(() => ({}));
+
+function simKill(svc) { post(`${API}/api/simulate/kill-container`, { service: svc }); }
+function simCrash(port) { post(`${API}/api/simulate/crash-service`, { port }); }
+function simToggle(port) { post(`${API}/api/simulate/toggle-health`, { port }); }
+
+async function simDisaster() {
+    // Kill one container from each service in rapid succession
+    await post(`${API}/api/simulate/kill-container`, { service: "healstack_api-gateway" });
+    await post(`${API}/api/simulate/kill-container`, { service: "healstack_auth-service" });
+    await post(`${API}/api/simulate/kill-container`, { service: "healstack_data-service" });
+}
+
+// ═══════════════════════════════════════════════════════════
+//  BLUE-GREEN DEPLOYMENT
+// ═══════════════════════════════════════════════════════════
+
+async function startDeploy() {
+    const service = document.getElementById("deploy-service").value;
+    const image = document.getElementById("deploy-image").value;
+    if (!image) { alert("Enter an image name"); return; }
+    const status = document.getElementById("deploy-status");
+    status.innerHTML = '<div class="ai-entry" style="border-left-color:var(--blue)">🚀 Deploying...</div>';
+    const r = await post(`${API}/api/deploy`, { service, image });
+    status.innerHTML = `<div class="ai-entry" style="border-left-color:var(--blue)">Status: ${r.status || "sent"}</div>`;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  INIT
+// ═══════════════════════════════════════════════════════════
+
+window.addEventListener("load", () => {
+    refresh();
+    connectSSE();
+    setInterval(refresh, 5000);
+});
+
+window.addEventListener("resize", () => {
+    if (document.getElementById("tab-topology")?.classList.contains("active")) {
+        refresh();
+    }
+});
