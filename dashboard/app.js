@@ -139,14 +139,16 @@ function renderLoop() {
     // Nodes
     nodes.forEach(n => {
         const isHovered = hoveredNode === n.id;
+        const isNeighborOfHovered = hoveredNode && nodeMap[hoveredNode].neighbors.includes(n.id);
+
         const clusterColor = getClusterColor(n.cluster || 0);
         const statusColor = !n.alive ? COLORS.rose : (n.load > 15 ? COLORS.rose : (n.load > 8 ? COLORS.amber : clusterColor));
 
-        // Cluster region ring (outer glow)
+        // Cluster region ring (outer glow/neighbor highlight)
         ctx.beginPath();
-        ctx.arc(n.x, n.y, isHovered ? 16 : 12, 0, Math.PI * 2);
-        ctx.fillStyle = clusterColor;
-        ctx.globalAlpha = 0.15;
+        ctx.arc(n.x, n.y, (isHovered ? 16 : (isNeighborOfHovered ? 13 : 12)), 0, Math.PI * 2);
+        ctx.fillStyle = isHovered ? "#ffffff" : clusterColor;
+        ctx.globalAlpha = isHovered ? 0.3 : (isNeighborOfHovered ? 0.25 : 0.15);
         ctx.fill();
         ctx.globalAlpha = 1.0;
 
@@ -180,7 +182,13 @@ function renderLoop() {
             ctx.beginPath();
             ctx.arc(n.x, n.y, 12, 0, Math.PI * 2);
             ctx.strokeStyle = "#ffffff";
-            ctx.lineWidth = 2 / transform.scale;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        } else if (isNeighborOfHovered) {
+            ctx.beginPath();
+            ctx.arc(n.x, n.y, 9, 0, Math.PI * 2);
+            ctx.strokeStyle = "rgba(255,255,255,0.5)";
+            ctx.lineWidth = 1;
             ctx.stroke();
         }
 
@@ -596,10 +604,7 @@ function updateTooltip(e, node) {
     const panel = document.getElementById("nodeInspector");
     if (!panel) return;
 
-    if (!node) {
-        panel.innerHTML = '<div class="empty-state">Hover over a node to inspect.</div>';
-        return;
-    }
+    if (!node) return;
 
     const clusterColor = getClusterColor(node.cluster || 0);
     const roleLabel = (node.role || 'unknown').replace(/_/g, ' ');
@@ -614,24 +619,45 @@ function updateTooltip(e, node) {
             <span class="insp-status" style="color:${statusColor}">${statusLabel}</span>
         </div>
         <div class="insp-role" style="color:${clusterColor}">${roleLabel}</div>
-        <div class="insp-row">
-            <span class="insp-label">Vector</span>
-            <span class="insp-val mono">[${node.vector.join(", ")}]</span>
+        <div class="insp-details">
+            <div class="insp-row">
+                <span class="insp-label">Vector</span>
+                <span class="insp-val mono" id="inspVector">[${node.vector.map(v => v.toFixed(2)).join(", ")}]</span>
+            </div>
+            <div class="insp-row">
+                <span class="insp-label">Load</span>
+                <span class="insp-val">${node.load}</span>
+            </div>
+            <div class="insp-row">
+                <span class="insp-label">Trust</span>
+                <span class="insp-val">${node.trust.toFixed(2)}</span>
+            </div>
+            <div class="insp-row">
+                <span class="insp-label">Neighbors</span>
+                <span class="insp-val">${neighborCount}</span>
+            </div>
         </div>
-        <div class="insp-row">
-            <span class="insp-label">Load</span>
-            <span class="insp-val">${node.load}</span>
+        <div class="insp-actions" style="display:flex; gap:6px; margin-top:8px">
+            <button class="btn btn-sm btn-primary" style="flex:1" onclick="setTargetVector('${node.vector.join(",")}')">Set as Target</button>
+            <button class="btn btn-sm btn-ghost" onclick="copyVectorToClipboard('${node.vector.join(",")}')">Copy</button>
         </div>
-        <div class="insp-row">
-            <span class="insp-label">Trust</span>
-            <span class="insp-val">${node.trust.toFixed(2)}</span>
-        </div>
-        <div class="insp-row">
-            <span class="insp-label">Neighbors</span>
-            <span class="insp-val">${neighborCount} nodes</span>
-        </div>
-        <div class="insp-hint">Click to ${node.alive ? 'kill' : 'recover'}</div>
+        <div class="insp-hint">Click node to ${node.alive ? 'Kill' : 'Recover'}</div>
     `;
+}
+
+function setTargetVector(vecStr) {
+    const vec = vecStr.split(",").map(Number);
+    vec.forEach((v, i) => {
+        const input = document.getElementById("v" + i);
+        if (input) input.value = v.toFixed(2);
+    });
+    logEvent(`Target vector updated to: [${vecStr}]`);
+}
+
+function copyVectorToClipboard(vecStr) {
+    navigator.clipboard.writeText(`[${vecStr}]`).then(() => {
+        logEvent("Vector copied to clipboard.");
+    });
 }
 
 function logEvent(msg) {
@@ -647,32 +673,46 @@ function logEvent(msg) {
 // ─── SIDEBAR RESIZE ───
 
 (function initResize() {
-    const handle = document.getElementById("resizeHandle");
-    const sidebar = document.getElementById("sidebarRight");
     const grid = document.querySelector(".main-grid");
-    if (!handle || !sidebar || !grid) return;
+    const leftHandle = document.getElementById("resizeHandleLeft");
+    const rightHandle = document.getElementById("resizeHandleRight");
 
-    let dragging = false;
+    if (!grid || !leftHandle || !rightHandle) return;
 
-    handle.addEventListener("mousedown", (e) => {
+    let activeSide = null; // 'left' or 'right'
+    let leftWidth = 280;
+    let rightWidth = 320;
+
+    function updateGrid() {
+        grid.style.gridTemplateColumns = `${leftWidth}px 1fr ${rightWidth}px`;
+    }
+
+    const startResize = (e, side) => {
         e.preventDefault();
-        dragging = true;
-        handle.classList.add("active");
+        activeSide = side;
         document.body.style.cursor = "col-resize";
         document.body.style.userSelect = "none";
-    });
+        (side === 'left' ? leftHandle : rightHandle).classList.add("active");
+    };
+
+    leftHandle.addEventListener("mousedown", (e) => startResize(e, 'left'));
+    rightHandle.addEventListener("mousedown", (e) => startResize(e, 'right'));
 
     window.addEventListener("mousemove", (e) => {
-        if (!dragging) return;
-        const newWidth = window.innerWidth - e.clientX;
-        const clamped = Math.max(200, Math.min(newWidth, window.innerWidth * 0.5));
-        grid.style.gridTemplateColumns = `280px 1fr ${clamped}px`;
+        if (!activeSide) return;
+
+        if (activeSide === 'left') {
+            leftWidth = Math.max(250, Math.min(e.clientX, window.innerWidth * 0.4));
+        } else {
+            rightWidth = Math.max(200, Math.min(window.innerWidth - e.clientX, window.innerWidth * 0.5));
+        }
+        updateGrid();
     });
 
     window.addEventListener("mouseup", () => {
-        if (!dragging) return;
-        dragging = false;
-        handle.classList.remove("active");
+        if (!activeSide) return;
+        (activeSide === 'left' ? leftHandle : rightHandle).classList.remove("active");
+        activeSide = null;
         document.body.style.cursor = "";
         document.body.style.userSelect = "";
         resize(); // recalculate canvas size

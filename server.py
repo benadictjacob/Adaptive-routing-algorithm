@@ -193,9 +193,9 @@ def init_system(mode="microservice"):
 
         role_idx += 1
 
-    # --- Step 2: Connect via Delaunay triangulation for routing guarantee ---
+    # --- Step 2: Connect via hybrid topology (KNN + Delaunay) ---
     vectors = [list(n.vector) for n in network.nodes]
-    network._connect_delaunay(vectors)
+    network._connect_hybrid(vectors, k=4)
 
     # --- Step 3: Set up the simulation engine ---
     sim_adaptive = Simulation(network, engine_adaptive)

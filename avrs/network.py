@@ -79,8 +79,12 @@ class Network:
         # Step 2: connect nodes based on topology
         if topology == "delaunay":
             net._connect_delaunay(vectors)
-        else:
+        elif topology == "knn":
             net._connect_knn(k_neighbors)
+        elif topology == "hybrid":
+            net._connect_hybrid(vectors, k_neighbors)
+        else:
+            net._connect_delaunay(vectors)
 
         return net
 
@@ -131,6 +135,15 @@ class Network:
             for _, neighbor in nearest:
                 node.add_neighbor(neighbor)
                 neighbor.add_neighbor(node)
+
+    def _connect_hybrid(self, vectors: list, k: int) -> None:
+        """
+        Connect nodes using BOTH KNN and Delaunay.
+        KNN provides the 'normal' efficient mesh, and Delaunay
+        provides the 'worst case' routing guarantee.
+        """
+        self._connect_delaunay(vectors)
+        self._connect_knn(k)
 
     # ── Lookup ────────────────────────────────────────────────────
 

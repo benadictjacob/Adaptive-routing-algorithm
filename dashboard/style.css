@@ -132,23 +132,40 @@ h1 {
     overflow-y: auto;
 }
 
+.sidebar-left {
+    position: relative;
+    min-width: 250px;
+    max-width: 40vw;
+}
+
 .sidebar-right {
     border-right: none;
     border-left: 1px solid var(--border);
     position: relative;
     min-width: 200px;
     max-width: 50vw;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    /* Contain scrollable children */
 }
 
 .resize-handle {
     position: absolute;
-    left: 0;
     top: 0;
-    width: 5px;
+    width: 6px;
     height: 100%;
     cursor: col-resize;
     z-index: 20;
     transition: background 0.15s;
+}
+
+.rh-left {
+    right: -3px;
+}
+
+.rh-right {
+    left: -3px;
 }
 
 .resize-handle:hover,
@@ -160,6 +177,25 @@ h1 {
 .panel-section {
     padding: 16px;
     border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    /* Keep sections from squishing */
+}
+
+.decision-panel {
+    flex: 1;
+    /* Main scrollable area */
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.log-panel {
+    flex: 0 0 180px;
+    /* Fixed height for logs at bottom */
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border-top: 1px solid var(--border);
 }
 
 .section-title {
@@ -582,7 +618,7 @@ h1 {
 }
 
 .log-scroll {
-    max-height: 200px;
+    flex: 1;
     overflow-y: auto;
 }
 
