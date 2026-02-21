@@ -57,3 +57,26 @@ def vector_subtract(v1: Vector, v2: Vector) -> Vector:
     if len(v1) != len(v2):
         raise ValueError(f"Vector dimension mismatch: {len(v1)} vs {len(v2)}")
     return [a - b for a, b in zip(v1, v2)]
+
+
+def vector_add(v1: Vector, v2: Vector) -> Vector:
+    """Compute v1 + v2 element-wise."""
+    if len(v1) != len(v2):
+        raise ValueError(f"Vector dimension mismatch: {len(v1)} vs {len(v2)}")
+    return [a + b for a, b in zip(v1, v2)]
+
+
+def normalize(v: Vector) -> Vector:
+    """Return unit vector in the same direction. Returns zero vector if magnitude is 0."""
+    mag = magnitude(v)
+    if mag == 0.0:
+        return [0.0] * len(v)
+    return [x / mag for x in v]
+
+
+def angle_between(v1: Vector, v2: Vector) -> float:
+    """Angle in radians between two vectors. Returns 0 for zero vectors."""
+    cos = cosine_similarity(v1, v2)
+    # Clamp to [-1, 1] for numerical safety
+    cos = max(-1.0, min(1.0, cos))
+    return math.acos(cos)

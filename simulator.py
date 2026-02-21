@@ -15,8 +15,8 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Dict
 import time
 
-from vector_math import Vector, euclidean_distance, cosine_similarity
-from graph_builder import Node
+from avrs.math_utils import Vector, euclidean_distance, cosine_similarity
+from avrs.node import Node
 from routing_engine import RoutingEngine
 
 

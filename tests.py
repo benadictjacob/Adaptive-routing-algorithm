@@ -19,12 +19,13 @@ from typing import List
 # Ensure project root is on path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from vector_math import (
-    dot_product, magnitude, cosine_similarity,
-    euclidean_distance, vector_subtract, vector_add, normalize,
+from avrs.node import Node
+from avrs.math_utils import (
+    Vector, euclidean_distance, cosine_similarity,
+    vector_subtract, vector_add, normalize,
 )
 from graph_builder import (
-    Node, generate_nodes, build_knn_graph, build_delaunay_graph,
+    generate_nodes, build_knn_graph, build_delaunay_graph,
     validate_graph, graph_diagnostics, heal_around_failure,
     insert_node, remove_node, rebuild_topology,
 )

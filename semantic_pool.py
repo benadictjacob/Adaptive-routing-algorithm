@@ -12,60 +12,8 @@ import random
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-from vector_math import euclidean_distance, cosine_similarity
-
-
-# ===================================================================
-#  SECTION 1 — NODE CAPABILITY TAG
-# ===================================================================
-
-VALID_ROLES = {"auth", "proxy", "image_processor", "database", "compute", "storage", "gateway", "general"}
-
-
-class SemanticNode:
-    """
-    Node with a semantic_role describing its capability.
-    Wraps existing Node objects or can stand alone.
-    """
-
-    def __init__(
-        self,
-        node_id: str,
-        vector: list,
-        semantic_role: str = "general",
-        trust: float = 1.0,
-        overload_threshold: int = 20,
-    ):
-        self.id = node_id
-        self.vector = tuple(vector)
-        self.semantic_role = semantic_role
-        self.neighbors: List["SemanticNode"] = []
-        self.load: int = 0
-        self.trust: float = trust
-        self.alive: bool = True
-        self.overload_threshold = overload_threshold
-
-    def add_neighbor(self, other: "SemanticNode"):
-        if other not in self.neighbors and other is not self:
-            self.neighbors.append(other)
-
-    def is_overloaded(self) -> bool:
-        return self.load >= self.overload_threshold
-
-    def increment_load(self):
-        self.load += 1
-
-    def reset_load(self):
-        self.load = 0
-
-    def fail(self):
-        self.alive = False
-
-    def recover(self):
-        self.alive = True
-
-    def __repr__(self):
-        return f"SemanticNode({self.id}, role={self.semantic_role}, load={self.load})"
+from avrs.node import Node
+from avrs.math_utils import euclidean_distance, cosine_similarity
 
 
 # ===================================================================
@@ -86,18 +34,18 @@ class SemanticRequest:
 # ===================================================================
 
 def semantic_filter(
-    candidates: List[SemanticNode],
+    candidates: List[Node],
     required_role: str,
     expand_search: bool = True,
-) -> List[SemanticNode]:
+) -> List[Node]:
     """
-    Filter candidate nodes by semantic_role == required_role.
+    Filter candidate nodes by role == required_role.
     If none found and expand_search is True, expand one hop outward.
     """
     # Direct match among candidates
     matched = [
         n for n in candidates
-        if n.alive and n.semantic_role == required_role
+        if n.alive and n.role == required_role
     ]
     if matched:
         return matched
@@ -108,7 +56,7 @@ def semantic_filter(
         expanded = []
         for c in candidates:
             for nb in c.neighbors:
-                if nb.id not in seen and nb.alive and nb.semantic_role == required_role:
+                if nb.id not in seen and nb.alive and nb.role == required_role:
                     expanded.append(nb)
                     seen.add(nb.id)
         if expanded:
@@ -122,7 +70,7 @@ def semantic_filter(
 # ===================================================================
 
 def score_candidate(
-    node: SemanticNode,
+    node: Node,
     target_vector: list,
     distance_weight: float = 0.5,
     load_weight: float = 0.3,
@@ -150,10 +98,10 @@ def score_candidate(
 
 
 def select_best_candidate(
-    candidates: List[SemanticNode],
+    candidates: List[Node],
     target_vector: list,
     **kwargs,
-) -> Optional[SemanticNode]:
+) -> Optional[Node]:
     """
     From filtered candidates, pick the one with highest score.
     Section 6: skip overloaded nodes.
@@ -179,19 +127,19 @@ class SemanticPool:
     Manages semantic node pools and distributes traffic.
     """
 
-    def __init__(self, nodes: List[SemanticNode]):
+    def __init__(self, nodes: List[Node]):
         self.nodes = nodes
-        self._pools: Dict[str, List[SemanticNode]] = {}
+        self._pools: Dict[str, List[Node]] = {}
         self._round_robin_idx: Dict[str, int] = {}
         self._metrics: Dict[str, dict] = {}
         self._rebuild_pools()
 
     def _rebuild_pools(self):
-        """Group alive nodes by semantic_role."""
+        """Group alive nodes by role."""
         self._pools.clear()
         for n in self.nodes:
             if n.alive:
-                self._pools.setdefault(n.semantic_role, []).append(n)
+                self._pools.setdefault(n.role, []).append(n)
         # Init round-robin counters
         for role in self._pools:
             if role not in self._round_robin_idx:
@@ -203,7 +151,7 @@ class SemanticPool:
                     "failover_count": 0,
                 }
 
-    def get_pool(self, role: str) -> List[SemanticNode]:
+    def get_pool(self, role: str) -> List[Node]:
         """Get all alive nodes in a role pool."""
         return [n for n in self._pools.get(role, []) if n.alive]
 
@@ -217,7 +165,7 @@ class SemanticPool:
         role: str,
         target_vector: list,
         strategy: str = "best_score",
-    ) -> Optional[SemanticNode]:
+    ) -> Optional[Node]:
         """
         Select a node from the pool for the given role.
 
@@ -261,13 +209,13 @@ class SemanticPool:
 
     def failover_select(
         self,
-        failed_node: SemanticNode,
+        failed_node: Node,
         target_vector: list,
-    ) -> Optional[SemanticNode]:
+    ) -> Optional[Node]:
         """
         When a node fails, select another from the same pool.
         """
-        role = failed_node.semantic_role
+        role = failed_node.role
         pool = [n for n in self.get_pool(role) if n.id != failed_node.id]
         if not pool:
             return None
@@ -407,9 +355,9 @@ def build_semantic_network(
     k: int = 4,
     seed: int = 42,
     overload_threshold: int = 20,
-) -> List[SemanticNode]:
+) -> List[Node]:
     """
-    Build a network of SemanticNodes with assigned roles.
+    Build a network of Nodes with assigned roles.
 
     Args:
         roles: mapping of role_name -> count, e.g. {"auth": 3, "compute": 5}
@@ -420,10 +368,10 @@ def build_semantic_network(
     for role, count in roles.items():
         for _ in range(count):
             vec = [rng.uniform(-1, 1) for _ in range(dimensions)]
-            node = SemanticNode(
+            node = Node(
                 f"S{idx:03d}",
                 vec,
-                semantic_role=role,
+                role=role,
                 overload_threshold=overload_threshold,
             )
             nodes.append(node)

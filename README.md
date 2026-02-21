@@ -2,46 +2,105 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![Status: Advanced Prototype](https://img.shields.io/badge/Status-Advanced_Prototype-emerald.svg)]()
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Architecture: Decentralized](https://img.shields.io/badge/Architecture-Decentralized-brightgreen.svg)]()
 
-**AVRS** is a cutting-edge, decentralized routing simulator that leverages high-dimensional vector intelligence to navigate complex network architectures. Unlike traditional routing protocols that rely on global tables or central coordinators, AVRS makes **purely local, greedy decisions** based on semantic positioning, trust metrics, and real-time load balancing.
-
----
-
-## 🚀 Key Architectural Pillars
-
-### 1. Vector Intelligence & Semantic Mapping
-Nodes are positioned in a 4D semantic space. Routing is performed by calculating the vector distance between the current node and the target destination. The system uses **Extreme Semantic Differentiation** to cluster related services (e.g., all "database" nodes) while ensuring radical separation between different architectural sections.
-
-### 2. Hybrid Topology (KNN + Delaunay)
-To guarantee 100% routing success in a stable network, AVRS implements a **Hybrid Topology**:
-- **K-Nearest Neighbors (KNN):** Ensures efficient, localized mesh connectivity.
-- **Delaunay Triangulation:** Mathematically guarantees that a greedy path always exists by eliminating local minima in the geographic space.
-
-### 3. Adaptive Decision Scoring
-Every hop is calculated using a weighted multi-factor formula:
-$$Score = \alpha \cdot \text{Cosine} + \beta \cdot \text{DistGain} - \gamma \cdot \text{Load} + \delta \cdot \text{Trust} + \epsilon \cdot \text{PeerBonus}$$
-The system dynamically adjusts these weights based on network conditions, such as congestion or trust degradation.
-
-### 4. Semantic Peer Offloading (Proxy Logic)
-The latest advancement in AVRS is the **Intra-Section Load Balancing**. When a node becomes congested (High Load), it automatically identifies and delegates traffic to the **closest semantic peer** (proxy) within its same role, preventing bottlenecks and ensuring high availability.
-
-### 5. 3-State Resilience Simulator
-Test your network against real-world failures using the 3-state node cycle:
-- 🟢 **Alive:** Optimal performance.
-- 🟠 **Loaded:** High latency, seeking proxy offloading.
-- 🔴 **Dead:** Complete failure, triggering immediate rerouting to secondary sections.
+AVRS is a next-generation routing framework designed for **Edge, IoT, and high-density Microservice meshes**. It replaces traditional routing tables with **Geometric Vector Intelligence**, allowing nodes to make purely local, greedy decisions that navigate complex network topologies without a central coordinator.
 
 ---
 
-## 📊 Visual Analysis Dashboard
+## 🏗 System Architecture
 
-The AVRS Dashboard is a high-performance analysis tool featuring:
-- **Interactive Vector Graph:** Full Zoom/Pan support with role-based color coding.
-- **Decision Intelligence Panel:** Real-time bread-down of why the algorithm chose a specific path.
-- **Timeline Controller:** Pause, rewind, and step through routing decisions frame-by-frame.
-- **Architecture Overlay:** Heatmaps for latency, failure zones, and congestion gradients.
-- **Performance Comparison:** Side-by-side metrics against traditional routing algorithms.
+AVRS operates on a **Universal Node Model** where every service identity is mapped to a coordinate in a high-dimensional vector space.
+
+### Central Pillars:
+1.  **Decentralized Intelligence**: No global routing tables. Hops are calculated in real-time.
+2.  **Hybrid Topologies**: Merges K-Nearest Neighbors (KNN) for local speed with Delaunay Triangulation for global routing stability.
+3.  **Adaptive Scoring**: A dynamic multi-objective function balances progress-to-target, congestion, and trust.
+4.  **Semantic Load Balancing**: Automated peer offloading for stateless or role-equivalent services.
+
+### 📊 Routing Lifecycle (Visualized)
+```mermaid
+graph TD
+    A[Request Enters Node] --> B{Role Match?}
+    B -- No --> C[Greedy Routing toward Vector Target]
+    B -- Yes --> D{Node Congested?}
+    D -- Yes --> E[Peer Offloading to Role-Matching Neighbor]
+    D -- No --> F[Process Locally]
+    C --> G{Stuck in Local Minimum?}
+    G -- Yes --> H[Face Routing: Edge Traversal]
+    G -- No --> I[Select Optimal Next-Hop]
+    I --> J[Forward to Neighbor]
+    H --> J
+    E --> J
+```
+
+---
+
+## 🧠 Technical Deep-Dive
+
+### 1. The Decision Engine (Adaptive Scoring)
+Every routing decision is powered by a weighted multi-objective scoring function:
+
+$$Score = \alpha \cdot \text{Cosine}(\vec{V}_{next}, \vec{V}_{target}) + \beta \cdot \Delta\text{Distance} - \gamma \cdot \text{NormalizedLoad} + \delta \cdot \text{Trust}$$
+
+*   **$\alpha$ (Directional Velocity)**: Prioritizes neighbors pointing exactly toward the target.
+*   **$\beta$ (Geometric Gain)**: Prioritizes absolute reduction in Euclidean distance.
+*   **$\gamma$ (Congestion Backpressure)**: Penalizes nodes with high workload to prevent hotspots.
+*   **$\delta$ (Reputation Weight)**: Avoids nodes with low "Trust" scores (potential attackers or failing hardware).
+
+### 2. Semantic Peer Offloading
+AVRS nodes are "role-aware." When a node (Amber state) exceeds its `overload_threshold`, it automatically prioritizes routing to a "Peer Proxy"—a neighbor with the identical `role`—effectively acting as a decentralized load balancer.
+
+### 3. Resilience & Self-Healing
+If a node detects a neighbor has failed:
+1.  It triggers a **Localized Topology Heal**.
+2.  The routing engine switches to **Fallback Mode**, ignoring the dead hop.
+3.  If trapped in a local minimum, **Face Routing** (traversing polygon edges in the planar projection) is activated to escape.
+
+---
+
+## 🛣 Production Roadmap
+
+AVRS is transitioning from an **Advanced Simulation** to a **Production Infrastructure**.
+
+| Stage | Focus | Status |
+| :--- | :--- | :--- |
+| **Stage 1** | **Stabilization**: Unified Node Model, HMAC Hardening. | ✅ Complete |
+| **Stage 2** | **Optimization**: Localized Delaunay updates, Weight Controller. | 🚧 In Progress |
+| **Stage 3** | **Scaling**: $10^5$ Node simulation, persistent state logic. | 📅 Planned |
+| **Stage 4** | **Intelligence**: Predictive ML for weight tuning ($\alpha, \beta, \gamma$). | 📅 Planned |
+| **Stage 5** | **Production**: mTLS integration, Rust-based core, CLI tools. | 🚀 Vision |
+
+---
+
+## 🛠 Installation & Usage
+
+### 🚀 Get Started
+```bash
+# Clone the repository
+git clone https://github.com/username/adaptive-vector-routing.git
+cd adaptive-vector-routing
+
+# Install dependencies
+pip install -r requirements.rs
+
+# Start the dashboard
+python server.py
+```
+
+### 🧪 Running Tests
+The project features a comprehensive verification suite:
+- **Core Engine**: `python tests.py`
+- **Semantic Pools**: `python semantic_pool_tests.py`
+- **API Integrity**: `python test_api.py`
+
+---
+
+## 📄 License
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+*Built for the next generation of decentralized infrastructure.*
 
 ---
 

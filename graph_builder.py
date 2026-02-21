@@ -17,103 +17,12 @@ import math
 from typing import List, Optional, Dict, Tuple, Set
 from collections import deque
 
-from vector_math import Vector, euclidean_distance
+from avrs.node import Node
+from avrs.math_utils import Vector, euclidean_distance
 
 
 # ═══════════════════════════════════════════════════════════════════
-#  NODE MODEL (Section 1)
-# ═══════════════════════════════════════════════════════════════════
-
-class Node:
-    """
-    A point in fixed-dimensional vector space.
-
-    Attributes:
-        id       — unique string identifier
-        vector   — immutable position in vector space
-        neighbors — list of connected Node references
-        load     — dynamic workload counter (float)
-        trust    — reliability score in [0, 1]
-        alive    — whether node can receive/forward packets
-    """
-
-    def __init__(self, node_id: str, vector: Vector, role: str = "default", trust: float = 1.0):
-        self.id: str = node_id
-        self.vector: Vector = tuple(vector)  # immutable
-        self.role: str = role
-        self.neighbors: List['Node'] = []
-        self.load: float = 0.0
-        self.trust: float = max(0.0, min(1.0, trust))
-        self.alive: bool = True
-        self._route_cache: Dict[tuple, str] = {}
-
-    # ── State Management ──────────────────────────────────────────
-
-    def increment_load(self) -> None:
-        """Each hop: load += 1 (Section 9)."""
-        self.load += 1.0
-
-    def reset_load(self) -> None:
-        """Reset load to zero."""
-        self.load = 0.0
-
-    def fail(self) -> None:
-        """Mark node as inactive (Section 11)."""
-        self.alive = False
-
-    def recover(self) -> None:
-        """Bring node back online."""
-        self.alive = True
-        self.load = 0.0
-
-    def reduce_trust(self, amount: float = 0.3) -> None:
-        """Simulate trust attack — dynamically reduce trust (Section 10)."""
-        self.trust = max(0.0, self.trust - amount)
-
-    def restore_trust(self, amount: float = 1.0) -> None:
-        """Restore trust to given level."""
-        self.trust = min(1.0, amount)
-
-    # ── Neighbor Management ───────────────────────────────────────
-
-    def add_neighbor(self, neighbor: 'Node') -> None:
-        """Add bidirectional neighbor link (no duplicates, no self)."""
-        if neighbor.id != self.id and neighbor not in self.neighbors:
-            self.neighbors.append(neighbor)
-
-    def remove_neighbor(self, neighbor: 'Node') -> None:
-        """Remove a neighbor link."""
-        self.neighbors = [n for n in self.neighbors if n.id != neighbor.id]
-
-    def get_alive_neighbors(self) -> List['Node']:
-        """Return only neighbors that are currently alive."""
-        return [n for n in self.neighbors if n.alive]
-
-    # ── Route Cache (Section 14) ──────────────────────────────────
-
-    def cache_route(self, target_key: tuple, next_hop_id: str) -> None:
-        """Cache a successful next-hop for a target vector key."""
-        self._route_cache[target_key] = next_hop_id
-
-    def get_cached_route(self, target_key: tuple) -> Optional[str]:
-        """Retrieve a cached next-hop, or None."""
-        return self._route_cache.get(target_key)
-
-    def clear_cache(self) -> None:
-        """Clear the route cache."""
-        self._route_cache.clear()
-
-    # ── Display ───────────────────────────────────────────────────
-
-    def __repr__(self) -> str:
-        status = "ALIVE" if self.alive else "DOWN"
-        vec_short = [round(v, 3) for v in self.vector]
-        return (
-            f"Node({self.id} | vec={vec_short} | "
-            f"load={self.load:.0f} | trust={self.trust:.2f} | {status})"
-        )
-
-
+#  GRAPH CONSTRUCTION (Section 3)
 # ═══════════════════════════════════════════════════════════════════
 #  GRAPH CONSTRUCTION (Section 2)
 # ═══════════════════════════════════════════════════════════════════

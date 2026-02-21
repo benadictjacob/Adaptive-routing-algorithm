@@ -10,8 +10,10 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from avrs.node import Node
+from avrs.math_utils import euclidean_distance, cosine_similarity
 from semantic_pool import (
-    SemanticNode, SemanticRequest, SemanticPool,
+    SemanticRequest, SemanticPool,
     semantic_filter, score_candidate, select_best_candidate,
     route_semantic_request, build_semantic_network,
     display_semantic_topology,
@@ -44,11 +46,11 @@ def make_pool():
 # ===================================================================
 
 def test_node_role_tag():
-    """S1: Every node has a semantic_role."""
+    """S1: Every node has a role."""
     nodes, _ = make_pool()
     for n in nodes:
-        assert n.semantic_role, f"Node {n.id} missing role"
-        assert isinstance(n.semantic_role, str)
+        assert n.role, f"Node {n.id} missing role"
+        assert isinstance(n.role, str)
 
 
 # ===================================================================
@@ -69,8 +71,8 @@ def test_request_routes_to_correct_role():
     assert result.success, "Route failed"
     # Verify selected node has correct role
     selected = [n for n in nodes if n.id == result.selected_node_id][0]
-    assert selected.semantic_role == "auth", \
-        f"Wrong role: {selected.semantic_role} (expected auth)"
+    assert selected.role == "auth", \
+        f"Wrong role: {selected.role} (expected auth)"
 
 
 # ===================================================================
@@ -79,19 +81,19 @@ def test_request_routes_to_correct_role():
 
 def test_semantic_filter_direct():
     """S3: Filter returns only matching role nodes."""
-    a = SemanticNode("A", [0,0,0,0], semantic_role="auth")
-    b = SemanticNode("B", [1,0,0,0], semantic_role="compute")
-    c = SemanticNode("C", [0,1,0,0], semantic_role="auth")
+    a = Node("A", [0,0,0,0], role="auth")
+    b = Node("B", [1,0,0,0], role="compute")
+    c = Node("C", [0,1,0,0], role="auth")
     result = semantic_filter([a, b, c], "auth")
     assert len(result) == 2
-    assert all(n.semantic_role == "auth" for n in result)
+    assert all(n.role == "auth" for n in result)
 
 
 def test_semantic_filter_expanded_search():
     """S3: Filter expands search when no direct match."""
-    a = SemanticNode("A", [0,0,0,0], semantic_role="proxy")
-    b = SemanticNode("B", [1,0,0,0], semantic_role="compute")
-    c = SemanticNode("C", [0,1,0,0], semantic_role="auth")
+    a = Node("A", [0,0,0,0], role="proxy")
+    b = Node("B", [1,0,0,0], role="compute")
+    c = Node("C", [0,1,0,0], role="auth")
     # B is neighbor of A, C is neighbor of B
     a.add_neighbor(b)
     b.add_neighbor(c)
@@ -110,8 +112,8 @@ def test_semantic_filter_expanded_search():
 
 def test_lower_load_preferred():
     """S4: Node with lower load scores higher."""
-    a = SemanticNode("A", [0.5,0.5,0.5,0.5], semantic_role="compute")
-    b = SemanticNode("B", [0.5,0.5,0.5,0.5], semantic_role="compute")
+    a = Node("A", [0.5,0.5,0.5,0.5], role="compute")
+    b = Node("B", [0.5,0.5,0.5,0.5], role="compute")
     a.load = 0
     b.load = 15
     score_a = score_candidate(a, [0.5,0.5,0.5,0.5])
@@ -122,9 +124,9 @@ def test_lower_load_preferred():
 def test_select_best_candidate():
     """S4: Best candidate is selected from pool."""
     nodes = [
-        SemanticNode("A", [0.1,0.1,0.1,0.1], semantic_role="compute"),
-        SemanticNode("B", [0.5,0.5,0.5,0.5], semantic_role="compute"),
-        SemanticNode("C", [0.9,0.9,0.9,0.9], semantic_role="compute"),
+        Node("A", [0.1,0.1,0.1,0.1], role="compute"),
+        Node("B", [0.5,0.5,0.5,0.5], role="compute"),
+        Node("C", [0.9,0.9,0.9,0.9], role="compute"),
     ]
     target = [0.5, 0.5, 0.5, 0.5]
     selected = select_best_candidate(nodes, target)
@@ -174,8 +176,8 @@ def test_round_robin_avoids_repetition():
 
 def test_overloaded_node_skipped():
     """S6: Overloaded nodes are skipped during selection."""
-    a = SemanticNode("A", [0.5,0.5,0.5,0.5], semantic_role="compute", overload_threshold=5)
-    b = SemanticNode("B", [0.4,0.4,0.4,0.4], semantic_role="compute", overload_threshold=5)
+    a = Node("A", [0.5,0.5,0.5,0.5], role="compute", overload_threshold=5)
+    b = Node("B", [0.4,0.4,0.4,0.4], role="compute", overload_threshold=5)
     a.load = 10  # overloaded
     b.load = 1   # fine
 
@@ -216,7 +218,7 @@ def test_failover_selects_another():
     replacement = pool.failover_select(victim, [0.5]*4)
     assert replacement is not None, "Failover returned None"
     assert replacement.id != victim.id, "Failover returned failed node"
-    assert replacement.semantic_role == "auth", "Failover wrong role"
+    assert replacement.role == "auth", "Failover wrong role"
 
 
 def test_failover_metrics_tracked():
@@ -266,8 +268,8 @@ def test_never_routes_to_wrong_role():
         result = route_semantic_request(pool, req)
         if result.success:
             selected = [n for n in nodes if n.id == result.selected_node_id][0]
-            assert selected.semantic_role == role, \
-                f"Request {i}: routed to {selected.semantic_role} instead of {role}"
+            assert selected.role == role, \
+                f"Request {i}: routed to {selected.role} instead of {role}"
 
 
 def test_load_distributes_evenly():

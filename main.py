@@ -16,9 +16,10 @@ import random
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from vector_math import euclidean_distance
+from avrs.node import Node
+from avrs.math_utils import Vector, euclidean_distance, cosine_similarity
 from graph_builder import (
-    Node, generate_nodes, build_knn_graph, build_delaunay_graph,
+    generate_nodes, build_knn_graph, build_delaunay_graph,
     validate_graph, graph_diagnostics,
 )
 from topology_engine import greedy_guarantee_check
